@@ -54,6 +54,8 @@ class LLMOutputSanitizer:
         parsed = self._try_fix_json(raw.strip())
         if parsed is None:
             return SanitizedOutput(error=f"INVALID_JSON: {raw[:200]}")
+        if not isinstance(parsed, dict):
+            return SanitizedOutput(error=f"INVALID_JSON_TOPLEVEL: expected object, got {type(parsed).__name__}")
 
         action = parsed.get("action") or parsed.get("name") or parsed.get("function", "")
         params = parsed.get("params") or parsed.get("arguments") or {}

@@ -208,9 +208,16 @@ class GraphEngine:
                 tool_calls = message.get("tool_calls", [])
                 if tool_calls:
                     fn = tool_calls[0].get("function", {})
+                    raw_params = fn.get("arguments", {})
+                    # Tool call arguments are JSON strings per API spec.
+                    if isinstance(raw_params, str):
+                        try:
+                            raw_params = json.loads(raw_params)
+                        except json.JSONDecodeError:
+                            raw_params = {}
                     return json.dumps({
                         "action": fn.get("name", ""),
-                        "params": fn.get("arguments", {}),
+                        "params": raw_params,
                     })
                 # Plain text response.
                 content = message.get("content", "")
