@@ -1,0 +1,7 @@
+name: "gAIOps CodeQL config"
+queries:
+  - uses: security-and-quality
+paths-ignore:
+  - "**/__tests__/**"
+  - "**/*.test.*"
+  - "**/node_modules/**"

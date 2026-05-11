@@ -14,6 +14,8 @@ import { brainApiRouter } from "./server/brain-api";
 import { healthRouter } from "./server/health";
 import { createLogger } from "./logger";
 import { configureAudit } from "./security/audit";
+import { MetricsCollector } from "./store/metrics";
+import { metricsRouter } from "./server/metrics";
 
 const logger = createLogger("master");
 const PORT = parseInt(process.env.MASTER_PORT || "8080", 10);
@@ -31,6 +33,7 @@ function main(): void {
   const registry = new Registry();
   const tracker = new Tracker();
   const queue = new PriorityQueue();
+  const metricsCollector = new MetricsCollector();
 
   // ── Audit ──
   configureAudit({
@@ -67,7 +70,8 @@ function main(): void {
 
   // ── Routes ──
   app.use(healthRouter(registry, tracker, approver));
-  app.use(brainApiRouter(registry, queue, masterRouter, tracker, summarizer, interceptor, approver, wsServer, CLUSTER_TOKEN));
+  app.use(metricsRouter(registry, tracker, queue, approver, metricsCollector));
+  app.use(brainApiRouter(registry, queue, masterRouter, tracker, summarizer, interceptor, approver, wsServer, CLUSTER_TOKEN, metricsCollector));
 
   // ── Periodic maintenance ──
   setInterval(() => {

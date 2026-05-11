@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -14,6 +15,7 @@ import (
 	"github.com/gaiops/worker/internal/executor"
 	"github.com/gaiops/worker/internal/registry"
 	"github.com/gaiops/worker/internal/reporter"
+	"github.com/gaiops/worker/internal/server"
 	"github.com/gaiops/worker/internal/tools"
 )
 
@@ -95,11 +97,28 @@ func main() {
 	// Start periodic health reporting.
 	go rep.Start(ctx)
 
+	// HTTP health endpoint.
+	healthMux := http.NewServeMux()
+	healthMux.HandleFunc("/health", server.HealthHandler)
+	healthServer := &http.Server{Addr: ":9090", Handler: healthMux}
+	go func() {
+		jsonLog("info", "Health endpoint listening", map[string]interface{}{"addr": ":9090"})
+		if err := healthServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			jsonLog("error", "Health server failed", map[string]interface{}{"error": err.Error()})
+		}
+	}()
+
 	// Wait for shutdown signal.
 	sig := <-sigCh
 	jsonLog("info", "Shutting down", map[string]interface{}{"signal": sig.String()})
 
 	cancel()
+
+	// Shutdown health server gracefully.
+	ctxHealth, shutdownHealth := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownHealth()
+	healthServer.Shutdown(ctxHealth)
+
 	done := make(chan struct{})
 	go func() {
 		exec.WaitForDrain()

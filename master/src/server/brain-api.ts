@@ -14,6 +14,7 @@ import { Registry, WorkerNode } from "../store/registry";
 import { writeAudit, writeAuditEvent } from "../security/audit";
 import { createLogger } from "../logger";
 import { WebSocketServer } from "./ws-server";
+import { MetricsCollector } from "../store/metrics";
 
 const logger = createLogger("master");
 
@@ -52,6 +53,7 @@ export function brainApiRouter(
   approver: Approver,
   wsServer: WebSocketServer,
   clusterToken: string,
+  metricsCollector?: MetricsCollector,
 ): Router {
   const router = Router();
 
@@ -218,6 +220,7 @@ export function brainApiRouter(
     tracker.track(msgId, env, route.workerId);
     wsServer.sendToWorker(route.workerId, env);
     writeAudit(env);
+    metricsCollector?.recordRequest("success", false);
 
     // ── Response ──
     const response: BrainResponse = {

@@ -15,5 +15,10 @@ RUN apk add --no-cache ca-certificates tzdata
 
 COPY --from=builder /gaiops-worker /usr/local/bin/gaiops-worker
 
+EXPOSE 9090
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD wget -qO- http://localhost:9090/health || exit 1
+
 ENTRYPOINT ["gaiops-worker"]
 CMD ["--config", "/etc/gaiops/worker.yaml"]

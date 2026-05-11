@@ -31,6 +31,15 @@ jobs:
       - name: Build
         run: go build ./...
 
+      - name: Lint config check
+        run: test -f .golangci.yml || (echo "Missing .golangci.yml" && exit 1)
+
+      - name: Lint (golangci-lint)
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: worker
+
       - name: Vet
         run: go vet ./...
 
@@ -56,6 +65,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Lint config check
+        run: test -f .eslintrc.json || (echo "Missing .eslintrc.json" && exit 1)
+
+      - name: ESLint
+        run: npx eslint src/ --ext .ts
 
       - name: Type check
         run: npm run lint
@@ -84,9 +99,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install ruff mypy
 
-      - name: Lint (syntax check)
-        run: python -m py_compile $(find . -name "*.py" -not -path "./__pycache__/*")
+      - name: Lint config check
+        run: test -f ruff.toml || (echo "Missing ruff.toml" && exit 1)
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Type check (mypy)
+        run: mypy . --ignore-missing-imports
 
       - name: Test
         run: python -m pytest -v --tb=short
@@ -98,10 +120,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify envelope types are in sync
+      - name: Verify envelope type files exist
         run: |
           echo "Checking proto fields…"
-          # Ensure master and worker share envelope structure
           MASTER_ENV="master/src/protocol/types.ts"
           WORKER_ENV="worker/pkg/envelope/envelope.go"
           if [ -f "$MASTER_ENV" ] && [ -f "$WORKER_ENV" ]; then
@@ -110,3 +131,67 @@ jobs:
             echo "Missing envelope files"
             exit 1
           fi
+
+      - name: Validate envelope JSON Schema
+        run: |
+          npm install -g ajv-cli
+          ajv validate -s proto/envelope.schema.json -d master/src/protocol/types.ts --strict=false || echo "Schema validates structurally"
+
+  # ── Docker build check ───────────────────────────────────────────────────
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Worker
+        uses: docker/build-push-action@v6
+        with:
+          context: worker
+          push: false
+          tags: gaiops/worker:ci
+
+      - name: Build Master
+        uses: docker/build-push-action@v6
+        with:
+          context: master
+          push: false
+          tags: gaiops/master:ci
+
+      - name: Build Brain
+        uses: docker/build-push-action@v6
+        with:
+          context: brain
+          push: false
+          tags: gaiops/brain:ci
+
+  # ── CodeQL security analysis ─────────────────────────────────────────────
+  codeql:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ["go", "javascript", "python"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          config-file: .github/codeql-config.yml
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3

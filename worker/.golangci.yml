@@ -1,0 +1,20 @@
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - gofmt
+    - goimports
+    - gosimple
+    - ineffassign
+    - unused
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+  staticcheck:
+    checks: ["all"]
+
+run:
+  timeout: 2m
+  tests: true

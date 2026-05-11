@@ -10,6 +10,8 @@ import os
 import signal
 import sys
 
+from aiohttp import web
+
 from config import BrainConfig
 from core.graph import GraphEngine
 from llm.adapter import LLMAdapter
@@ -75,6 +77,23 @@ async def main() -> None:
         loop.add_signal_handler(sig, lambda s=sig: _shutdown(s))
 
     logger.info("Brain ready — awaiting triggers")
+
+    # HTTP health endpoint.
+    health_app = web.Application()
+
+    async def health_handler(request: web.Request) -> web.Response:
+        return web.json_response({
+            "status": "ok",
+            "uptime": int(asyncio.get_event_loop().time()),
+            "pid": os.getpid(),
+        })
+
+    health_app.router.add_get("/health", health_handler)
+    health_runner = web.AppRunner(health_app)
+    await health_runner.setup()
+    health_site = web.TCPSite(health_runner, "0.0.0.0", 9091)
+    await health_site.start()
+    logger.info("Health endpoint listening", extra={"data": {"addr": "0.0.0.0:9091"}})
 
     # Keep alive indefinitely.
     await asyncio.Event().wait()
