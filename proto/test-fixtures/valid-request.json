@@ -1,0 +1,19 @@
+{
+  "proto_version": "1.0",
+  "trace_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "msg_id": "00000000-0000-0000-0000-000000000001",
+  "msg_type": "request",
+  "timestamp": 1715000000,
+  "source": "brain",
+  "source_id": "brain",
+  "target": "worker",
+  "target_id": "*",
+  "correlation_id": "",
+  "priority": 0,
+  "ttl_seconds": 30,
+  "payload": {
+    "action": "ping.icmp",
+    "params": { "target": "localhost" },
+    "status": "pending"
+  }
+}

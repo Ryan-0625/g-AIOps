@@ -2,6 +2,7 @@ import express from "express";
 import http from "http";
 import https from "https";
 import fs from "fs";
+import { load as loadConfig } from "./config";
 import { Registry } from "./store/registry";
 import { Tracker } from "./orchestrator/tracker";
 import { PriorityQueue } from "./orchestrator/priority-queue";
@@ -12,22 +13,23 @@ import { Approver } from "./security/approver";
 import { WebSocketServer } from "./server/ws-server";
 import { brainApiRouter } from "./server/brain-api";
 import { healthRouter } from "./server/health";
+import { traceRouter } from "./server/trace";
 import { createLogger } from "./logger";
 import { configureAudit } from "./security/audit";
 import { MetricsCollector } from "./store/metrics";
 import { metricsRouter } from "./server/metrics";
 
 const logger = createLogger("master");
-const PORT = parseInt(process.env.MASTER_PORT || "8080", 10);
-const CLUSTER_TOKEN = process.env.CLUSTER_TOKEN || "dev-token-change-in-production";
+const cfg = loadConfig();
 
-// TLS config
+// TLS config (consumed directly from env for cert file paths)
 const TLS_CERT = process.env.TLS_CERT_PATH;
 const TLS_KEY = process.env.TLS_KEY_PATH;
 const useTls = !!(TLS_CERT && TLS_KEY);
 
 function main(): void {
-  logger.info("Master starting", { data: { port: PORT } });
+  const port = useTls ? cfg.server.api_port : cfg.server.ws_port;
+  logger.info("Master starting", { data: { port } });
 
   // ── Store ──
   const registry = new Registry();
@@ -37,8 +39,8 @@ function main(): void {
 
   // ── Audit ──
   configureAudit({
-    logPath: process.env.AUDIT_LOG_PATH || undefined,
-    enabled: process.env.AUDIT_ENABLED !== "false",
+    logPath: cfg.audit.log_path || undefined,
+    enabled: cfg.audit.enabled,
   });
 
   // ── Orchestrator ──
@@ -46,7 +48,7 @@ function main(): void {
   const summarizer = new Summarizer();
 
   // ── Security ──
-  const interceptor = new Interceptor(registry);
+  const interceptor = new Interceptor(registry, cfg.security.high_risk_actions);
   const approver = new Approver(registry, (req) => {
     logger.warn("Approval rejected or expired", {
       msg_id: req.id,
@@ -56,7 +58,7 @@ function main(): void {
 
   // ── Server ──
   const app = express();
-  app.use(express.json({ limit: "5mb" }));
+  app.use(express.json({ limit: cfg.server.api.body_limit }));
 
   const server = useTls
     ? https.createServer(
@@ -65,19 +67,20 @@ function main(): void {
       )
     : http.createServer(app);
 
-  const wsServer = new WebSocketServer(registry, tracker, masterRouter, queue, CLUSTER_TOKEN);
+  const wsServer = new WebSocketServer(registry, tracker, masterRouter, queue, cfg.cluster_token, cfg.server.ws);
   wsServer.attach(server);
 
   // ── Routes ──
   app.use(healthRouter(registry, tracker, approver));
   app.use(metricsRouter(registry, tracker, queue, approver, metricsCollector));
-  app.use(brainApiRouter(registry, queue, masterRouter, tracker, summarizer, interceptor, approver, wsServer, CLUSTER_TOKEN, metricsCollector));
+  app.use(brainApiRouter(registry, queue, masterRouter, tracker, summarizer, interceptor, approver, wsServer, cfg.cluster_token, metricsCollector));
+  app.use(traceRouter(tracker));
 
   // ── Periodic maintenance ──
   setInterval(() => {
     const orphans = tracker.reapOrphans();
     if (orphans > 0) logger.debug("Reaped orphans", { data: { count: orphans } });
-  }, 30_000);
+  }, cfg.orchestrator.pending_ttl * 100);
 
   setInterval(() => {
     const chunks = tracker.reapChunks();
@@ -85,8 +88,8 @@ function main(): void {
   }, 15_000);
 
   // ── Start ──
-  server.listen(PORT, "0.0.0.0", () => {
-    logger.info("Master listening", { data: { port: PORT, tls: useTls } });
+  server.listen(port, cfg.server.host, () => {
+    logger.info("Master listening", { data: { port, tls: useTls } });
   });
 
   // ── Graceful shutdown ──
@@ -96,7 +99,6 @@ function main(): void {
       logger.info("Master stopped", { data: {} });
       process.exit(0);
     });
-    // Force exit after 10s
     setTimeout(() => process.exit(1), 10_000);
   };
 

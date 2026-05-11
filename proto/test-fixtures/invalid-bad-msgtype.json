@@ -1,0 +1,8 @@
+{
+  "proto_version": "1.0",
+  "trace_id": "missing-all-fields",
+  "msg_type": "invalid_type",
+  "source": "unknown",
+  "target": "worker",
+  "payload": {}
+}

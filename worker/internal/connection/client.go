@@ -2,30 +2,33 @@ package connection
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/gaiops/worker/internal/executor"
+	"github.com/gaiops/worker/internal/logger"
 	"github.com/gaiops/worker/internal/reporter"
 	"github.com/gaiops/worker/pkg/envelope"
 )
 
 // Client manages the WebSocket connection to Master.
 type Client struct {
-	config  Config
-	auth    *Auth
-	exec    *executor.Executor
-	dedup   *DedupCache
-	policy  *ReconnectPolicy
+	config   Config
+	auth     *Auth
+	exec     *executor.Executor
+	dedup    *DedupCache
+	policy   *ReconnectPolicy
 	reporter *reporter.Reporter
-	conn    *websocket.Conn
-	mu      sync.Mutex
-	done    chan struct{}
+	conn     *websocket.Conn
+	mu       sync.Mutex
+	done     chan struct{}
+	log      *logger.Logger
 }
 
 // Config groups connection-related parameters.
@@ -39,15 +42,17 @@ type Config struct {
 	RiskLevels        map[string]string // per-action risk level
 	MaxConcurrent     int               // max concurrent tool executions
 	WorkerVersion     string            // build version
+	TLSSkipVerify     bool              // skip TLS cert verification (dev only)
 }
 
-func New(cfg Config, exec *executor.Executor) *Client {
+func New(cfg Config, exec *executor.Executor, log *logger.Logger) *Client {
 	return &Client{
 		config: cfg,
 		auth:   NewAuth(cfg.ClusterToken),
 		exec:   exec,
 		dedup:  NewDedupCache(1024),
 		policy: NewReconnectPolicy(cfg.ReconnectBase, cfg.ReconnectMax),
+		log:    log,
 	}
 }
 
@@ -76,7 +81,9 @@ func (c *Client) Run(ctx context.Context) error {
 
 		delay := c.policy.Delay(attempt)
 		attempt++
-		log.Printf("reconnecting in %v (attempt %d)", delay, attempt)
+		c.log.Warn("Reconnecting",
+			logger.WithData(map[string]interface{}{"delay": delay.String(), "attempt": attempt}),
+		)
 		select {
 		case <-time.After(delay):
 		case <-ctx.Done():
@@ -90,7 +97,16 @@ func (c *Client) connect(ctx context.Context) error {
 	header := http.Header{}
 	c.auth.Apply(&header)
 
-	conn, _, err := websocket.DefaultDialer.DialContext(ctx, c.config.MasterURL, header)
+	dialer := websocket.DefaultDialer
+	if strings.HasPrefix(c.config.MasterURL, "wss://") {
+		dialer = &websocket.Dialer{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: c.config.TLSSkipVerify,
+			},
+		}
+	}
+
+	conn, _, err := dialer.DialContext(ctx, c.config.MasterURL, header)
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
 	}
@@ -100,7 +116,7 @@ func (c *Client) connect(ctx context.Context) error {
 	c.done = make(chan struct{})
 	c.mu.Unlock()
 
-	log.Println("connected to Master")
+	c.log.Info("Connected to Master")
 	return nil
 }
 
@@ -130,7 +146,7 @@ func (c *Client) runSession(ctx context.Context) {
 
 		_, msg, err := c.conn.ReadMessage()
 		if err != nil {
-			log.Printf("read error: %v", err)
+			c.log.Error("Read error", logger.WithData(map[string]interface{}{"error": err.Error()}))
 			return
 		}
 
@@ -142,7 +158,7 @@ func (c *Client) runSession(ctx context.Context) {
 func (c *Client) handleMessage(ctx context.Context, raw []byte) {
 	env, err := envelope.Unmarshal(raw)
 	if err != nil {
-		log.Printf("invalid envelope: %v", err)
+		c.log.Warn("Invalid envelope", logger.WithData(map[string]interface{}{"error": err.Error()}))
 		return
 	}
 
@@ -159,7 +175,12 @@ func (c *Client) handleMessage(ctx context.Context, raw []byte) {
 
 	// Check TTL.
 	if time.Now().Unix()-env.Timestamp > int64(env.TTLSeconds) {
-		log.Printf("dropping expired request: msg_id=%s action=%s", env.MsgID, env.Payload.Action)
+		c.log.Warn("Expired request dropped",
+			logger.WithData(map[string]interface{}{
+				"msg_id": env.MsgID,
+				"action": env.Payload.Action,
+			}),
+		)
 		return
 	}
 
@@ -230,12 +251,12 @@ func (c *Client) send(env *envelope.Envelope) {
 
 	data, err := json.Marshal(env)
 	if err != nil {
-		log.Printf("marshal error: %v", err)
+		c.log.Error("Marshal error", logger.WithData(map[string]interface{}{"error": err.Error()}))
 		return
 	}
 
 	if err := c.conn.WriteMessage(websocket.TextMessage, data); err != nil {
-		log.Printf("write error: %v", err)
+		c.log.Error("Write error", logger.WithData(map[string]interface{}{"error": err.Error()}))
 	}
 }
 

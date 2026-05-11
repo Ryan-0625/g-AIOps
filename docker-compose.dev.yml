@@ -1,0 +1,77 @@
+# gAIOps Development Stack — hot-reload enabled
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Profiles: all services tagged "dev" — start with --profile dev
+
+services:
+  master:
+    profiles: ["dev"]
+    build:
+      context: ./master
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./master/src:/app/src
+      - ./config/master.yaml:/etc/gaiops/master.yaml:ro
+      - ${TLS_CERT_DIR:-./certs}:/etc/gaiops/certs:ro
+    environment:
+      - CLUSTER_TOKEN=dev-token-change
+      - LOG_LEVEL=${LOG_LEVEL:-debug}
+      - AUDIT_LOG_PATH=${AUDIT_LOG_PATH:-}
+      - AUDIT_ENABLED=${AUDIT_ENABLED:-true}
+      - TLS_CERT_PATH=${TLS_CERT_PATH:-}
+      - TLS_KEY_PATH=${TLS_KEY_PATH:-}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  worker:
+    profiles: ["dev"]
+    build:
+      context: ./worker
+      dockerfile: Dockerfile.dev
+    depends_on:
+      master:
+        condition: service_healthy
+    volumes:
+      - ./worker:/src
+      - ./config/worker.yaml:/etc/gaiops/worker.yaml:ro
+      - /var/log:/var/log:ro
+      - /:/host:ro
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-debug}
+      - TLS_SKIP_VERIFY=${TLS_SKIP_VERIFY:-true}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    pid: "host"
+
+  brain:
+    profiles: ["dev"]
+    build:
+      context: ./brain
+      dockerfile: Dockerfile.dev
+    depends_on:
+      master:
+        condition: service_healthy
+    volumes:
+      - ./brain:/app
+      - ./config/brain.yaml:/app/brain.yaml:ro
+    environment:
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b}
+      - CLUSTER_TOKEN=dev-token-change
+      - MASTER_API_URL=http://master:8080
+      - TLS_VERIFY=${TLS_VERIFY:-false}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9091/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped

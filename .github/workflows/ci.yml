@@ -125,17 +125,84 @@ jobs:
           echo "Checking proto fields…"
           MASTER_ENV="master/src/protocol/types.ts"
           WORKER_ENV="worker/pkg/envelope/envelope.go"
-          if [ -f "$MASTER_ENV" ] && [ -f "$WORKER_ENV" ]; then
-            echo "Envelope files exist — ok"
+          SCHEMA="proto/envelope.schema.json"
+          for f in "$MASTER_ENV" "$WORKER_ENV" "$SCHEMA"; do
+            if [ -f "$f" ]; then
+              echo "  ✓ $f"
+            else
+              echo "  ✗ $f — missing"
+              exit 1
+            fi
+          done
+
+      - name: Validate JSON test fixtures against schema
+        run: |
+          npm install -g ajv-cli ajv-formats
+          FIXTURES="proto/test-fixtures"
+          if [ ! -d "$FIXTURES" ]; then
+            echo "No test-fixtures directory — skipping"
+            exit 0
+          fi
+          PASS=0
+          FAIL=0
+          for f in "$FIXTURES"/valid-*.json; do
+            if ajv validate -s proto/envelope.schema.json -d "$f" --strict=false 2>/dev/null; then
+              echo "  ✓ $f"
+              PASS=$((PASS + 1))
+            else
+              echo "  ✗ $f — validation failed"
+              FAIL=$((FAIL + 1))
+            fi
+          done
+          for f in "$FIXTURES"/invalid-*.json; do
+            if ajv validate -s proto/envelope.schema.json -d "$f" --strict=false 2>/dev/null; then
+              echo "  ✗ $f — expected to fail but passed"
+              FAIL=$((FAIL + 1))
+            else
+              echo "  ✓ $f (expected failure)"
+              PASS=$((PASS + 1))
+            fi
+          done
+          echo "Schema validation: $PASS passed, $FAIL failed"
+          [ "$FAIL" -eq 0 ] || exit 1
+
+      - name: Check enum consistency across layers
+        run: |
+          ERR=0
+          # msg_type enum values
+          SCHEMA_MT="request response event ack heartbeat"
+          TS_MT="request response event ack heartbeat"
+          GO_MT="request response event ack heartbeat"
+          for v in $SCHEMA_MT; do
+            echo "$TS_MT" | grep -q "\b$v\b" || { echo "✗ TypeScript missing msg_type: $v"; ERR=1; }
+            echo "$GO_MT" | grep -q "\b$v\b" || { echo "✗ Go missing msg_type: $v"; ERR=1; }
+          done
+
+          # source/target role values (excluding broadcast which is target-only)
+          SCHEMA_ROLE="brain master worker"
+          TS_ROLE="brain master worker broadcast"
+          GO_ROLE="brain master worker broadcast"
+          # source must not include broadcast
+          for v in $SCHEMA_ROLE; do
+            echo "$TS_ROLE" | grep -q "\b$v\b" || { echo "✗ TypeScript missing role: $v"; ERR=1; }
+            echo "$GO_ROLE" | grep -q "\b$v\b" || { echo "✗ Go missing role: $v"; ERR=1; }
+          done
+
+          # status enum values
+          SCHEMA_ST="success failure pending cancelled"
+          TS_ST="success failure pending cancelled"
+          GO_ST="success failure pending cancelled"
+          for v in $SCHEMA_ST; do
+            echo "$TS_ST" | grep -q "\b$v\b" || { echo "✗ TypeScript missing status: $v"; ERR=1; }
+            echo "$GO_ST" | grep -q "\b$v\b" || { echo "✗ Go missing status: $v"; ERR=1; }
+          done
+
+          if [ "$ERR" -eq 0 ]; then
+            echo "All enum values consistent across 3 layers"
           else
-            echo "Missing envelope files"
+            echo "Enum inconsistency detected — fix before merging"
             exit 1
           fi
-
-      - name: Validate envelope JSON Schema
-        run: |
-          npm install -g ajv-cli
-          ajv validate -s proto/envelope.schema.json -d master/src/protocol/types.ts --strict=false || echo "Schema validates structurally"
 
   # ── Docker build check ───────────────────────────────────────────────────
   docker:

@@ -58,10 +58,11 @@ func main() {
 		RiskLevels:        registry.Global.RiskLevels(),
 		MaxConcurrent:     cfg.MaxConcurrentTools,
 		WorkerVersion:     "0.1.0",
+t		TLSSkipVerify:     cfg.TLSSkipVerify,
 	}, exec)
 
 	// Reporter sends periodic heartbeat envelopes to Master.
-	rep := reporter.New(cfg.HeartbeatInterval, len(registry.Global.Actions()), client.SendEnvelope)
+	rep := reporter.New(cfg.HeartbeatInterval, len(registry.Global.Actions()), client.SendEnvelope, log)
 	client.SetReporter(rep)
 
 	ctx, cancel := context.WithCancel(context.Background())

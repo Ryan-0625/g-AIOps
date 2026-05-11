@@ -25,7 +25,14 @@ export interface InterceptResult {
 }
 
 export class Interceptor {
-  constructor(private registry: Registry) {}
+  private highRiskSet: Set<string>;
+
+  constructor(
+    private registry: Registry,
+    highRiskActions?: string[],
+  ) {
+    this.highRiskSet = new Set(highRiskActions ?? FALLBACK_HIGH_RISK);
+  }
 
   intercept(action: string): InterceptResult {
     const level = this.registry.getRiskLevel(action) || "readonly";
@@ -39,7 +46,7 @@ export class Interceptor {
         return { allowed: true, requiresApproval: false, riskLevel: "readonly" };
       default:
         // Fallback for unknown risk levels.
-        if (FALLBACK_HIGH_RISK.has(action)) {
+        if (this.highRiskSet.has(action)) {
           return { allowed: false, requiresApproval: true, riskLevel: "unknown" };
         }
         return { allowed: true, requiresApproval: false, riskLevel: "unknown" };

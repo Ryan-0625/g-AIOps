@@ -54,6 +54,7 @@ type Config struct {
 	AllowedDiskPaths   []string        `yaml:"allowed_disk_paths"`
 	Tools              ToolsConfig     `yaml:"tools"`
 	CredentialsPath    string          `yaml:"credentials_path"`
+	TLSSkipVerify      bool            `yaml:"tls_skip_verify"`
 }
 
 // --- Defaults (only safe non-breaking defaults) ---

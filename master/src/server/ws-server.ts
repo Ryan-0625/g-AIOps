@@ -52,7 +52,7 @@ interface WorkerSocket {
 export class WebSocketServer {
   private wss: WSS | null = null;
   private connections = new Map<string, WorkerSocket>();
-  private rateLimiter = new ConnRateLimiter(50); // 50 conn/s max
+  private rateLimiter: ConnRateLimiter;
   private flowControl = new SlidingWindowRateLimiter(1000, 100); // 100 msg/s per worker
   private readonly PONG_TIMEOUT_MS = 60_000; // 60s no pong → zombie
 
@@ -62,7 +62,10 @@ export class WebSocketServer {
     private router: Router,
     private queue: PriorityQueue,
     private clusterToken: string,
-  ) {}
+    wsConfig?: { max_connections: number; connection_rate_limit: number; heartbeat_check_interval: number },
+  ) {
+    this.rateLimiter = new ConnRateLimiter(wsConfig?.connection_rate_limit ?? 50);
+  }
 
   attach(server: import("http").Server): void {
     this.wss = new WSS({ server });

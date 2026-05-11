@@ -1,0 +1,15 @@
+# Master dev image — includes devDependencies for ts-node-dev hot-reload
+FROM node:20-alpine
+
+RUN apk add --no-cache tzdata wget
+
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY tsconfig.json ./
+COPY src/ ./src/
+
+EXPOSE 8080
+
+CMD ["npx", "ts-node-dev", "--respawn", "--transpile-only", "src/index.ts"]

@@ -5,11 +5,11 @@ package reporter
 
 import (
 	"context"
-	"log"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/gaiops/worker/internal/logger"
 	"github.com/gaiops/worker/pkg/envelope"
 )
 
@@ -36,6 +36,7 @@ type Snapshot struct {
 // Reporter periodically pushes health/status snapshots to Master.
 type Reporter struct {
 	interval time.Duration
+	log      *logger.Logger
 
 	mu         sync.Mutex
 	toolCount  int
@@ -54,7 +55,7 @@ type Reporter struct {
 
 // New creates a Reporter. sendFn is called in a background goroutine each
 // interval to deliver the status envelope. If intervalSec is <= 0, 30s is used.
-func New(intervalSec int, toolCount int, sendFn func(*envelope.Envelope)) *Reporter {
+func New(intervalSec int, toolCount int, sendFn func(*envelope.Envelope), log *logger.Logger) *Reporter {
 	if intervalSec <= 0 {
 		intervalSec = 30
 	}
@@ -62,6 +63,7 @@ func New(intervalSec int, toolCount int, sendFn func(*envelope.Envelope)) *Repor
 		interval:  time.Duration(intervalSec) * time.Second,
 		toolCount: toolCount,
 		startedAt: time.Now(),
+		log:       log,
 		sendFn:    sendFn,
 	}
 }
@@ -130,7 +132,7 @@ func (r *Reporter) Start(ctx context.Context) {
 			env := r.healthReport()
 			r.sendFn(env)
 		case <-ctx.Done():
-			log.Println("reporter: stopping")
+			r.log.Info("Reporter stopping")
 			return
 		}
 	}

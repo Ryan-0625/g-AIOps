@@ -1,0 +1,13 @@
+{
+  "proto_version": "1.0",
+  "trace_id": "00000000-0000-0000-0000-000000000005",
+  "msg_id": "00000000-0000-0000-0000-000000000005",
+  "msg_type": "response",
+  "timestamp": 1715000000,
+  "source": "worker",
+  "target": "master",
+  "payload": {
+    "action": "service.restart",
+    "status": "failure"
+  }
+}

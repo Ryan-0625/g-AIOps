@@ -55,13 +55,24 @@ class GraphEngine:
 
     Each trace_id runs as an independent asyncio task.
     Sessions are isolated — no shared mutable state.
+
+    Supports degraded read-only mode: when the LLM is unavailable or slow,
+    the engine skips inference and returns existing results rather than
+    escalating to human intervention.
     """
 
-    def __init__(self, llm: LLMAdapter, master: MasterClient):
+    def __init__(self, llm: LLMAdapter, master: MasterClient, read_only: bool = False):
         self.llm = llm
         self.master = master
+        self.read_only = read_only
+        self.degraded = False
         self.active_sessions: dict[str, asyncio.Task] = {}
         self._tool_descriptions = _build_tool_descriptions()
+
+    @property
+    def is_degraded(self) -> bool:
+        """True when engine is operating in degraded read-only mode."""
+        return self.degraded
 
     async def start_session(self, context: str) -> str:
         """Start a new reasoning session. Returns trace_id."""
@@ -84,6 +95,11 @@ class GraphEngine:
                 # Call LLM → Planner.
                 llm_response = await self._call_llm(state, context)
                 if llm_response is None:
+                    if self.read_only:
+                        self.degraded = True
+                        state.conclusion = "LLM unavailable — read-only mode. Returning current results."
+                        logger.warning("Degraded to read-only mode", extra={"data": {"trace_id": state.trace_id}})
+                        break
                     state.needs_human = True
                     state.conclusion = "LLM unavailable after retries. Escalating to human."
                     break
@@ -168,6 +184,11 @@ class GraphEngine:
 
     async def _call_llm(self, state: GraphState, context: str) -> str | None:
         """Call the LLM for planning. Returns raw response string or None on failure."""
+        # If already degraded, skip LLM call entirely.
+        if self.degraded:
+            logger.info("Skipping LLM call — engine in degraded mode", extra={"data": {"trace_id": state.trace_id}})
+            return None
+
         system_content = SYSTEM_PROMPT.format(tool_descriptions=self._tool_descriptions)
 
         if state.summaries:
@@ -200,8 +221,17 @@ class GraphEngine:
         # Compress if needed.
         messages = compress_messages(messages, state.summaries)
 
+        import time
         try:
+            t0 = time.monotonic()
             response = await self.llm.chat(messages=messages, tools=ALL_TOOLS, timeout=30.0)
+            elapsed = time.monotonic() - t0
+            # Auto-degrade if LLM response is consistently slow (>20s).
+            if self.read_only and elapsed > 20.0:
+                self.degraded = True
+                logger.warning("LLM response slow — degrading to read-only mode", extra={
+                    "data": {"trace_id": state.trace_id, "elapsed_seconds": round(elapsed, 1)},
+                })
             if isinstance(response, dict):
                 message = response.get("message", {})
                 # Ollama tool_calls format.

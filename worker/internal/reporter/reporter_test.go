@@ -11,7 +11,7 @@ import (
 )
 
 func TestNewReporter(t *testing.T) {
-	r := reporter.New(30, 10, func(env *envelope.Envelope) {})
+	r := reporter.New(30, 10, func(env *envelope.Envelope) {}, nil)
 	if r == nil {
 		t.Fatal("expected non-nil reporter")
 	}
@@ -22,14 +22,14 @@ func TestNewReporter(t *testing.T) {
 }
 
 func TestReporterDefaultInterval(t *testing.T) {
-	r := reporter.New(0, 5, func(env *envelope.Envelope) {})
+	r := reporter.New(0, 5, func(env *envelope.Envelope) {}, nil)
 	if r == nil {
 		t.Fatal("expected non-nil reporter")
 	}
 }
 
 func TestRecordExecutions(t *testing.T) {
-	r := reporter.New(30, 5, func(env *envelope.Envelope) {})
+	r := reporter.New(30, 5, func(env *envelope.Envelope) {}, nil)
 
 	r.RecordExecution(true, false, false)
 	r.RecordExecution(false, false, false)
@@ -56,7 +56,7 @@ func TestRecordExecutions(t *testing.T) {
 }
 
 func TestSnapshotIncludesUptime(t *testing.T) {
-	r := reporter.New(30, 3, func(env *envelope.Envelope) {})
+	r := reporter.New(30, 3, func(env *envelope.Envelope) {}, nil)
 	time.Sleep(1100 * time.Millisecond)
 	s := r.Snapshot()
 	if s.UptimeSeconds < 1 {
@@ -72,7 +72,7 @@ func TestStartSendsHeartbeat(t *testing.T) {
 		}
 	}
 
-	r := reporter.New(1, 5, sendFn)
+	r := reporter.New(1, 5, sendFn, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -88,7 +88,7 @@ func TestStartSendsHeartbeat(t *testing.T) {
 }
 
 func TestHealthReportSnapshot(t *testing.T) {
-	r := reporter.New(30, 7, func(env *envelope.Envelope) {})
+	r := reporter.New(30, 7, func(env *envelope.Envelope) {}, nil)
 	r.RecordExecution(true, false, false)
 
 	s := r.Snapshot()

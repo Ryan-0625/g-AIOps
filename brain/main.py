@@ -59,10 +59,11 @@ async def main() -> None:
         api_url=cfg.master_api_url,
         cluster_token=cfg.cluster_token,
         timeout=cfg.master_request_timeout,
+        tls_verify=cfg.tls_verify,
     )
 
     # Initialize graph engine.
-    engine = GraphEngine(llm=llm, master=master)
+    engine = GraphEngine(llm=llm, master=master, read_only=cfg.read_only)
 
     logger.info("Brain initialized", extra={"data": {
         "llm_provider": cfg.llm_provider,
@@ -86,6 +87,7 @@ async def main() -> None:
             "status": "ok",
             "uptime": int(asyncio.get_event_loop().time()),
             "pid": os.getpid(),
+            "degraded": engine.is_degraded if engine else False,
         })
 
     health_app.router.add_get("/health", health_handler)

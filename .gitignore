@@ -41,3 +41,7 @@ master/dist/
 # Test artifacts
 .cache/
 profile.cov
+
+# Generated dev certificates (run scripts/gen-certs.sh to create)
+certs/
+!certs/.gitkeep

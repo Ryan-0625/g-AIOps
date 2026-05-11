@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 from typing import Any
 
 import aiohttp
@@ -14,16 +15,63 @@ logger = get_logger()
 param_filter = ParamFilter()
 
 
+class SlidingWindowRateLimiter:
+    """Sliding-window rate limiter (参照 master/src/server/flow-control.ts).
+
+    Tracks request timestamps per key in a deque and rejects once the
+    window is full. Thread-safe for asyncio usage.
+    """
+
+    def __init__(self, max_requests: int, window_seconds: int = 60):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self._timestamps: list[float] = []
+
+    def allow(self) -> bool:
+        """Check and record a request. Returns True if under the limit."""
+        now = time.monotonic()
+        cutoff = now - self.window_seconds
+        # Prune expired timestamps.
+        self._timestamps = [t for t in self._timestamps if t > cutoff]
+        if len(self._timestamps) >= self.max_requests:
+            return False
+        self._timestamps.append(now)
+        return True
+
+    @property
+    def remaining(self) -> int:
+        return max(0, self.max_requests - len(self._timestamps))
+
+
 class MasterClient:
-    def __init__(self, api_url: str, cluster_token: str, timeout: float = 30.0):
+    def __init__(
+        self,
+        api_url: str,
+        cluster_token: str,
+        timeout: float = 30.0,
+        max_requests_per_minute: int = 60,
+        tls_verify: bool = True,
+    ):
         self.api_url = api_url.rstrip("/")
         self.cluster_token = cluster_token
         self.timeout = timeout
+        self.tls_verify = tls_verify
         self._session: aiohttp.ClientSession | None = None
+        self._rate_limiter = SlidingWindowRateLimiter(
+            max_requests=max_requests_per_minute,
+            window_seconds=60,
+        )
 
     async def _ensure_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            connector = None
+            if not self.tls_verify and self.api_url.startswith("https"):
+                import ssl
+                ssl_ctx = ssl.create_default_context()
+                ssl_ctx.check_hostname = False
+                ssl_ctx.verify_mode = ssl.CERT_NONE
+                connector = aiohttp.TCPConnector(ssl=ssl_ctx)
+            self._session = aiohttp.ClientSession(connector=connector)
         return self._session
 
     async def execute(
@@ -59,6 +107,26 @@ class MasterClient:
                 "error": {
                     "code": "PARAM_SANITIZED",
                     "message": filter_result.reason,
+                },
+            }
+
+        # Rate limiter — avoid overwhelming Master.
+        if not self._rate_limiter.allow():
+            logger.warning(
+                "Master rate limit reached, throttling request",
+                extra={
+                    "action": action,
+                    "error_code": "MASTER_CLIENT_RATE_LIMITED",
+                    "data": {"trace_id": trace_id},
+                },
+            )
+            return {
+                "trace_id": trace_id,
+                "status": "failure",
+                "action": action,
+                "error": {
+                    "code": "MASTER_CLIENT_RATE_LIMITED",
+                    "message": "Request throttled: Master rate limit reached",
                 },
             }
 
