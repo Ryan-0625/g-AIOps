@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // --- Message types ---
@@ -302,11 +304,5 @@ func timeNow() int64 {
 }
 
 func uuidV7() string {
-	// Production: use github.com/google/uuid.NewUUID().
-	// Placeholder for bootstrap — replaced when the dependency is added.
-	return placeholderUUID()
-}
-
-var placeholderUUID = func() string {
-	return "00000000-0000-0000-0000-000000000000"
+	return uuid.NewString()
 }

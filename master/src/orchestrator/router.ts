@@ -34,11 +34,6 @@ export class Router {
       }
 
       // Check if any Worker supports this action.
-      const allActions = new Set<string>();
-      for (const wId of []) {
-        /* placeholder */
-      }
-      // More precise: check registry for action support.
       return {
         code: "NO_AVAILABLE_WORKER",
         message: `No worker available for action: ${action}`,
