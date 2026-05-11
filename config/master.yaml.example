@@ -1,0 +1,56 @@
+# Master 配置模板
+# 复制为 master.yaml 并根据部署环境修改
+
+# === 服务 ===
+server:
+  host: "0.0.0.0"
+  ws_port: 8080
+  api_port: 8081
+
+  # WebSocket 连接
+  ws:
+    max_connections: 5000                  # 最大同时连接数
+    connection_rate_limit: 50              # 连接限流（个/秒），防重连风暴
+    heartbeat_check_interval: 30           # 僵尸节点检测间隔（秒）
+
+  # Brain REST API
+  api:
+    rate_limit: 120                        # 限流（次/分钟）
+    body_limit: "5mb"                      # 请求体上限
+
+# === 安全 ===
+cluster_token: "dev-token-change-in-production"
+security:
+  high_risk_actions:                       # 高危指令（需审批）
+    - service.restart
+    - service.stop
+    - exec.run
+    - process.kill
+  approval_timeout: 300                    # 审批超时（秒）
+
+# === Worker 管理 ===
+worker:
+  heartbeat_miss_tolerance: 3              # 心跳丢失容忍次数（超时 = interval × 此值）
+
+# === 编排 ===
+orchestrator:
+  max_pending: 10000                       # tracker pending 上限
+  pending_ttl: 300                         # 孤儿请求 TTL（秒）
+  broadcast_timeout: 10                    # 广播总超时（秒）
+  chunk_timeout: 30                        # 分片重组超时（秒）
+
+# === 优先级 ===
+priority:
+  aging:
+    p0_to_p1_after: 60                     # 常规请求 60s 后自动提升
+    p1_to_p2_after: 120                    # 重要请求 120s 后自动提升
+
+# === 日志 ===
+logging:
+  level: "info"                            # debug | info | warn | error
+  format: "json"                           # json | text
+
+# === 审计 ===
+audit:
+  log_path: "/var/log/gaiops/audit.log"   # 审计日志路径（独立于 stdout 日志）
+  enabled: true

@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gaiops.dev/proto/envelope/v1",
+  "title": "gAIOps Envelope Protocol v1",
+  "description": "核心通信契约。所有跨层消息（Brain→Master→Worker）必须遵循此 Schema。变更需三层同步更新版本号。",
+  "type": "object",
+  "required": [
+    "proto_version", "trace_id", "msg_id", "msg_type",
+    "timestamp", "source", "target", "payload"
+  ],
+  "properties": {
+    "proto_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+$",
+      "description": "协议语义版本号。主版本不同则不兼容。连接时双方协商取较低次版本。",
+      "example": "1.0"
+    },
+    "trace_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "全链路追踪 ID，从 Brain 发起时生成，贯穿整条链路。接收方严禁修改。"
+    },
+    "msg_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "当前消息唯一 ID，用于去重（Worker 端去重缓存）和日志关联。"
+    },
+    "msg_type": {
+      "type": "string",
+      "enum": ["request", "response", "event", "ack", "heartbeat"],
+      "description": "request=请求执行 / response=执行结果 / event=主动上报 / ack=接收确认 / heartbeat=WebSocket Ping"
+    },
+    "timestamp": {
+      "type": "integer",
+      "minimum": 1000000000,
+      "description": "Unix UTC 时间戳（秒）。仅用于日志和审计，不参与业务逻辑判断（由本地单调时钟驱动超时）。"
+    },
+    "source": {
+      "type": "string",
+      "enum": ["brain", "master", "worker"],
+      "description": "发送方角色。"
+    },
+    "source_id": {
+      "type": "string",
+      "description": "发送方唯一标识。Brain 固定为 'brain'，Worker 为 worker_id。用于日志过滤和来源追溯。"
+    },
+    "target": {
+      "type": "string",
+      "enum": ["brain", "master", "worker", "broadcast"],
+      "description": "接收方角色。broadcast 表示发送给所有匹配的接收方。"
+    },
+    "target_id": {
+      "type": "string",
+      "pattern": "^(\\*|[0-9a-f-]+|all)$",
+      "description": "接收方标识。'*'=自动选择一个，'all'=全部，具体 ID=定向发送。",
+      "default": "*"
+    },
+    "correlation_id": {
+      "type": "string",
+      "pattern": "^(|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+      "description": "关联上下游消息。response 的 correlation_id = 对应 request 的 msg_id。event 和 request 的 correlation_id 为空。"
+    },
+    "priority": {
+      "type": "integer",
+      "enum": [0, 1, 2],
+      "description": "0=常规 / 1=重要 / 2=紧急。Brain 仅在标记为紧急的场景下使用 2。",
+      "default": 0
+    },
+    "ttl_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 300,
+      "description": "消息有效时间（秒）。到达 TTL 仍未处理的消息自动丢弃。默认值由发送方根据操作类型设置。",
+      "default": 30
+    },
+    "payload": {
+      "type": "object",
+      "required": ["action", "status"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "pattern": "^[a-z]+\\.[a-z]+$",
+          "description": "动作名称。命名空间格式：<领域>.<操作>，如 ping.icmp、service.restart、disk.usage。"
+        },
+        "params": {
+          "type": "object",
+          "description": "执行参数。key-value 结构，具体字段由 action 定义。",
+          "default": {}
+        },
+        "status": {
+          "type": "string",
+          "enum": ["success", "failure", "pending", "cancelled"],
+          "description": "执行状态。pending 用于长时间任务的中途回执。cancelled 用于审批拒绝或 TTL 过期。"
+        },
+        "data": {
+          "description": "响应数据。结构和内容由 action 定义。data 超 1MB 时设置 truncated=true。",
+          "default": {}
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "data 或 error.raw 是否被截断。接收方应据此判断数据完整性。",
+          "default": false
+        },
+        "truncated_at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "截断前的原始字节数。仅在 truncated=true 时有效。"
+        },
+        "progress": {
+          "type": "object",
+          "description": "长时间任务进度。仅 status=pending 时有效。",
+          "properties": {
+            "percent": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100,
+              "description": "进度百分比。"
+            },
+            "message": {
+              "type": "string",
+              "maxLength": 200,
+              "description": "当前状态描述。"
+            }
+          },
+          "required": ["percent", "message"]
+        },
+        "error": {
+          "type": "object",
+          "description": "错误信息。仅 status=failure 时必填。",
+          "properties": {
+            "code": {
+              "type": "string",
+              "description": "错误码。全系统唯一，参见 docs/error-codes.md。",
+              "examples": ["EXECUTION_TIMEOUT", "TOOL_PANIC", "COMMAND_NOT_ALLOWED"]
+            },
+            "message": {
+              "type": "string",
+              "maxLength": 1000,
+              "description": "人类可读的错误描述。"
+            },
+            "raw": {
+              "type": "string",
+              "maxLength": 102400,
+              "description": "原始系统错误透传。最大 100KB，超过则截断并标记 truncated=true。禁止包装美化。"
+            }
+          },
+          "required": ["code", "message"]
+        }
+      }
+    }
+  }
+}

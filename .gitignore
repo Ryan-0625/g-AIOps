@@ -1,0 +1,43 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+*.yaml
+!*example*
+!**/*.example
+
+# Claude
+.claude/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build / Dependencies
+node_modules/
+dist/
+*.pyc
+__pycache__/
+.venv/
+*.egg-info/
+vendor/
+
+# Worker
+worker/worker
+worker/worker.exe
+
+# Master
+master/node_modules/
+master/dist/
+
+# Logs
+*.log
+/tmp/gaiops/
+
+# Test artifacts
+.cache/
+profile.cov

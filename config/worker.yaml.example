@@ -1,0 +1,45 @@
+# Worker 配置模板
+# 复制为 worker.yaml 并根据目标环境修改
+
+# === 节点身份 ===
+worker_id: "dev-worker-1"                  # 必填，全局唯一，跨重启持久化
+master_url: "ws://localhost:8080/ws"       # 必填，Master WebSocket 地址
+cluster_token: "dev-token-change-in-production"  # 必填，与 Master 共享
+
+# === 连接 ===
+heartbeat_interval: 15                     # 心跳间隔（秒），影响 Master 端超时判定
+reconnect:
+  base_delay: 1                            # 重连基础延迟（秒）
+  max_delay: 60                            # 最大延迟（秒）
+
+# === 并发 ===
+max_concurrent_tools: 5                    # 最大并发工具执行数，超出排队
+
+# === 日志 ===
+logging:
+  level: "info"                            # debug | info | warn | error
+  format: "json"                           # json | text
+
+# === 路径安全 ===
+allowed_log_paths:
+  - "/var/log/"
+  - "/var/log/nginx/"
+  - "/var/log/system/"
+allowed_disk_paths:
+  - "/"
+  - "/data"
+  - "/var"
+
+# === exec.run 白名单 ===
+tools:
+  exec:
+    allowed_commands:
+      - "/usr/bin/systemctl"
+      - "/usr/bin/docker"
+      - "/bin/df"
+      - "/bin/ls"
+      - "/usr/bin/tail"
+      - "/usr/bin/grep"
+
+# === 凭据（外部引用，不内嵌） ===
+credentials_path: "./dev-keys/"            # 指向包含 SSH 私钥、API token 的目录

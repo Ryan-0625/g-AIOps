@@ -1,0 +1,43 @@
+# Brain 配置模板
+# 复制为 brain.yaml 并根据环境修改
+
+# === LLM ===
+llm:
+  provider: "ollama"                       # ollama | openai（预留）
+  model: "qwen2.5:7b"                     # 模型名称
+  base_url: "http://localhost:11434"       # Ollama API 地址
+  timeout: 60                              # LLM 调用总超时（秒）
+  max_retries: 1                           # 流式断连最大重试次数
+  context_limit: 32000                     # 目标 token 上限
+
+# === Master 连接 ===
+master:
+  api_url: "http://localhost:8081/api/v1"  # Master REST API 地址
+  cluster_token: "dev-token-change-in-production"
+  request_timeout: 30                      # 请求超时（秒）
+
+# === 推理循环 ===
+engine:
+  max_retry_same_action: 3                 # 同一工具连续失败熔断上限
+  max_total_retries: 5                     # 总重试上限
+  analyst_model: ""                        # 留空则使用 llm.model
+  planner_model: ""                        # 留空则使用 llm.model
+
+# === 参数消毒 ===
+param_filter:
+  max_str_param_len: 1024                  # 字符串参数上限
+  max_cmd_length: 512                      # 命令类参数上限
+  max_list_param_len: 100                  # 列表参数元素上限
+  block_command_chain: true                # 拦截 curl|bash 类命令链
+  block_path_traversal: true               # 拦截 ../ 路径遍历
+  sensitive_paths:                         # 禁止读取的路径
+    - "/etc/shadow"
+    - "/etc/passwd"
+    - "/etc/kubernetes/"
+    - "/root/.ssh/"
+    - "/var/lib/kubelet/"
+
+# === 日志 ===
+logging:
+  level: "info"                            # debug | info | warn | error
+  format: "json"                           # json | text
