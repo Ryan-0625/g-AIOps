@@ -35,6 +35,10 @@ type Config struct {
 	HeartbeatInterval int // seconds
 	ReconnectBase     int // seconds
 	ReconnectMax      int // seconds
+	Actions           []string          // tool actions for capability advert
+	RiskLevels        map[string]string // per-action risk level
+	MaxConcurrent     int               // max concurrent tool executions
+	WorkerVersion     string            // build version
 }
 
 func New(cfg Config, exec *executor.Executor) *Client {
@@ -107,6 +111,14 @@ func (c *Client) runSession(ctx context.Context) {
 
 	// Start heartbeat in a separate goroutine.
 	go NewHeartbeat(c.config.HeartbeatInterval).Start(c.conn, c.done)
+
+	// Advertise capabilities so Master knows what this worker supports.
+	c.SendCapabilityAdvertise(
+		c.config.Actions,
+		c.config.RiskLevels,
+		c.config.MaxConcurrent,
+		c.config.WorkerVersion,
+	)
 
 	// Read loop.
 	for {

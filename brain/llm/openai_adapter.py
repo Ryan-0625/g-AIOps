@@ -3,8 +3,6 @@
 import json
 from typing import Any, AsyncGenerator
 
-from openai import AsyncOpenAI
-
 from .adapter import LLMAdapter
 
 
@@ -18,6 +16,8 @@ class OpenAIAdapter(LLMAdapter):
         model: str = "gpt-4o",
         timeout: float = 60.0,
     ):
+        from openai import AsyncOpenAI  # lazy import: only needed for OpenAI adapter
+
         self.model = model
         self.client = AsyncOpenAI(
             api_key=api_key or "sk-placeholder",

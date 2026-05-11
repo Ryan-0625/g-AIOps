@@ -12,7 +12,7 @@ RUN npx tsc
 # ── Runtime stage ────────────────────────────────────────────────────────
 FROM node:20-alpine
 
-RUN apk add --no-cache tzdata
+RUN apk add --no-cache tzdata wget
 
 WORKDIR /app
 COPY --from=builder /src/dist ./dist

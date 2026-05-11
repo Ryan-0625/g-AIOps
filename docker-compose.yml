@@ -13,7 +13,7 @@ services:
       - ./config/master.yaml:/etc/gaiops/master.yaml:ro
       - ${TLS_CERT_DIR:-./certs}:/etc/gaiops/certs:ro
     environment:
-      - CLUSTER_TOKEN=${CLUSTER_TOKEN:-dev-token-change}
+      - CLUSTER_TOKEN=dev-token-change
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - AUDIT_LOG_PATH=${AUDIT_LOG_PATH:-}
       - AUDIT_ENABLED=${AUDIT_ENABLED:-true}
@@ -61,7 +61,7 @@ services:
     environment:
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b}
-      - CLUSTER_TOKEN=${CLUSTER_TOKEN:-dev-token-change}
+      - CLUSTER_TOKEN=dev-token-change
       - MASTER_API_URL=http://master:8080
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:9091/health"]

@@ -75,6 +75,10 @@ func main() {
 		HeartbeatInterval: cfg.HeartbeatInterval,
 		ReconnectBase:     cfg.Reconnect.BaseDelay,
 		ReconnectMax:      cfg.Reconnect.MaxDelay,
+		Actions:           registry.Global.Actions(),
+		RiskLevels:        registry.Global.RiskLevels(),
+		MaxConcurrent:     cfg.MaxConcurrentTools,
+		WorkerVersion:     "0.1.0",
 	}, exec)
 
 	// Reporter sends periodic heartbeat envelopes to Master.
