@@ -4,7 +4,7 @@
 Usage:
   gaiops health
   gaiops worker list
-  gaiops execute <action> [--key value ...]
+  gaiops execute <action> [key=val ...]
   gaiops result <msg_id>
   gaiops approve <id>
   gaiops reject <id>
@@ -12,6 +12,7 @@ Usage:
   gaiops trace get <trace_id>
   gaiops config init
   gaiops config show
+  gaiops completion bash|zsh
 
 Common options:
   --base-url URL     Master API base URL (default http://localhost:8080)
@@ -21,17 +22,94 @@ Common options:
 """
 
 import argparse
+import difflib
 import json
 import os
+import sys
+import time
 import urllib.error
 import urllib.request
 import uuid
 from configparser import ConfigParser
 from pathlib import Path
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 CONFIG_PATH = Path.home() / ".gaiops" / "config"
 DEFAULT_BASE_URL = "http://localhost:8080"
+
+HARDCODED_ACTIONS = [
+    "ping.icmp", "disk.usage", "dns.lookup", "http.get", "http.post",
+    "system.info", "file.read", "file.write", "network.connections",
+    "container.list", "service.status", "service.restart", "service.stop",
+    "process.list", "process.kill", "exec.run", "log.tail",
+    "tool.create", "tool.delete",
+]
+
+# ── ANSI Colors ──────────────────────────────────────────────────────────────
+
+if os.name == "nt":
+    os.system("color")  # enable ANSI on Windows
+
+_USE_COLOR = sys.stdout.isatty()
+
+
+class C:
+    GREEN = "\033[92m"
+    RED = "\033[91m"
+    YELLOW = "\033[93m"
+    CYAN = "\033[96m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+    RESET = "\033[0m"
+
+
+def _c(text, color, condition=True):
+    if condition and _USE_COLOR:
+        return f"{color}{text}{C.RESET}"
+    return text
+
+
+def _ok(text):
+    return _c(text, C.GREEN)
+
+
+def _err(text):
+    return _c(text, C.RED)
+
+
+def _warn(text):
+    return _c(text, C.YELLOW)
+
+
+def _info(text):
+    return _c(text, C.CYAN)
+
+
+def _bold(text):
+    return _c(text, C.BOLD)
+
+
+def _dim(text):
+    return _c(text, C.DIM)
+
+
+# ── Human-readable helpers ───────────────────────────────────────────────────
+
+
+def _fmt_uptime(seconds):
+    """Format seconds to human-readable: '1h 23m' or '45s'."""
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m {seconds % 60}s"
+    hours = minutes // 60
+    return f"{hours}h {minutes % 60}m"
+
+
+def _fmt_timestamp():
+    return time.strftime("%H:%M:%S")
 
 
 # ── Config ───────────────────────────────────────────────────────────────────
@@ -48,7 +126,7 @@ def load_config():
     return cfg
 
 
-def save_config(base_url: str, token: str):
+def save_config(base_url, token):
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     cfg = ConfigParser()
     cfg["defaults"] = {"base_url": base_url, "token": token}
@@ -61,7 +139,7 @@ def save_config(base_url: str, token: str):
 # ── HTTP Client ──────────────────────────────────────────────────────────────
 
 
-def request(method: str, path: str, base_url: str, token: str, body: dict | None = None) -> dict:
+def request(method, path, base_url, token, body=None):
     url = f"{base_url.rstrip('/')}{path}"
     headers = {
         "User-Agent": f"gaiops-cli/{VERSION}",
@@ -91,10 +169,117 @@ def request(method: str, path: str, base_url: str, token: str, body: dict | None
         return {"status_code": 0, "error": {"code": "UNEXPECTED_ERROR", "message": str(e)}}
 
 
+def _fetch_actions(base_url, token, cache=None):
+    """Fetch available actions from Master, with caching."""
+    now = time.time()
+    if cache and (now - cache["ts"]) < 60:
+        return cache["actions"]
+
+    result = request("GET", "/api/v1/workers", base_url, token)
+    actions = []
+    for w in result.get("workers", []):
+        for a in w.get("actions", []):
+            if a not in actions:
+                actions.append(a)
+    if not actions:
+        actions = HARDCODED_ACTIONS[:]
+
+    if cache is not None:
+        cache["ts"] = now
+        cache["actions"] = actions
+    return actions
+
+
+def _suggest_actions(bad_action, available):
+    """Return up to 3 similar action names."""
+    matches = difflib.get_close_matches(bad_action, available, n=3, cutoff=0.4)
+    return matches
+
+
+# ── Spinner ──────────────────────────────────────────────────────────────────
+
+
+class Spinner:
+    """Simple CLI spinner using backspace characters."""
+
+    CHARS = "|/-\\"
+
+    def __init__(self, message="Waiting", use_color=True):
+        self.message = message
+        self.use_color = use_color and _USE_COLOR
+        self.i = 0
+        self._enabled = sys.stdout.isatty()
+
+    def spin(self):
+        if not self._enabled:
+            return
+        ch = self.CHARS[self.i % len(self.CHARS)]
+        color = C.CYAN if self.use_color else ""
+        reset = C.RESET if self.use_color else ""
+        sys.stdout.write(f"\r{color}{ch}{reset} {self.message}...")
+        sys.stdout.flush()
+        self.i += 1
+
+    def done(self, msg=""):
+        if self._enabled:
+            sys.stdout.write("\r" + " " * 60 + "\r")
+            sys.stdout.flush()
+        if msg:
+            print(msg)
+
+
+def _poll_until_done(msg_id, base_url, token, interval=2, timeout=300):
+    """Poll result endpoint with spinner until status != pending."""
+    spinner = Spinner("Waiting for result")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        spinner.spin()
+        result = request("GET", f"/api/v1/result/{msg_id}", base_url, token)
+        status = result.get("payload", {}).get("status", "")
+        if status and status != "pending":
+            spinner.done()
+            return result
+        time.sleep(interval)
+
+    spinner.done()
+    print(_err(f"[TIMEOUT] Result not ready after {timeout}s"))
+    return None
+
+
 # ── Output ───────────────────────────────────────────────────────────────────
 
 
-def output(data, raw_json: bool = False):
+def _error_summary(data):
+    """Return a human-readable one-line error summary."""
+    sc = data.get("status_code", 0)
+    err = data.get("error", {})
+    if isinstance(err, dict):
+        code = err.get("code", "")
+        msg = err.get("message", "")
+    else:
+        code = ""
+        msg = str(err)
+
+    if sc == 0 and code == "CONNECTION_ERROR":
+        return f"Connection failed — {_dim('Is Master running at --base-url?')}"
+    if sc == 401 and code == "AUTH_FAILED":
+        return f"Authentication failed — {_dim('Set CLUSTER_TOKEN env or use --token')}"
+    if sc == 403:
+        return f"Access denied — {_dim('Check your token permissions')}"
+    if code == "NO_AVAILABLE_WORKER":
+        return f"No worker available — {_dim('Check gaiops worker list')}"
+    if code == "INVALID_ENVELOPE" and msg:
+        return f"Request validation failed: {msg[:120]}"
+    if msg:
+        return f"{code} — {msg[:120]}"
+    if code:
+        return f"Error: {code}"
+    if sc:
+        return f"HTTP {sc}"
+    return str(data.get("error", "Unknown error"))
+
+
+def output(data, raw_json=False):
     if raw_json:
         print(json.dumps(data, indent=2, ensure_ascii=False, default=str))
         return
@@ -102,19 +287,24 @@ def output(data, raw_json: bool = False):
     sc = data.get("status_code", 0)
     prefix = ""
     if sc and sc >= 400:
-        prefix = "ERROR"
+        prefix = _err("ERROR")
     elif sc and sc >= 200 and sc < 300:
-        prefix = "OK"
+        prefix = _ok("OK")
+
     if prefix:
-        print(f"[{prefix}] HTTP {sc}" if sc else f"[{prefix}]")
+        label = f"[{prefix}] HTTP {sc}" if sc else f"[{prefix}]"
+        if sc >= 400:
+            summary = _error_summary(data)
+            print(f"{label} {summary}")
+        else:
+            print(label)
 
-    # Print the rest, stripping internal fields.
     printable = {k: v for k, v in data.items() if k not in ("status_code",)}
-    print(json.dumps(printable, indent=2, ensure_ascii=False, default=str))
+    if printable:
+        print(json.dumps(printable, indent=2, ensure_ascii=False, default=str))
 
 
-def print_table(rows, headers, raw_json: bool = False):
-    """Simple table output."""
+def print_table(rows, headers, raw_json=False):
     if raw_json:
         print(json.dumps(rows, indent=2, ensure_ascii=False, default=str))
         return
@@ -125,11 +315,12 @@ def print_table(rows, headers, raw_json: bool = False):
             col_widths[i] = max(col_widths[i], len(str(cell)))
 
     sep = "  ".join(h.ljust(w) for h, w in zip(headers, col_widths))
-    print(sep)
-    print("-" * len(sep))
+    print(_bold(sep))
+    print(_dim("-" * len(sep)))
     for row in rows:
         print("  ".join(str(c).ljust(w) for c, w in zip(row, col_widths)))
-    print(f"\nTotal: {len(rows)}")
+    total_color = _info if len(rows) > 0 else _dim
+    print(f"\n{total_color(f'Total: {len(rows)}')}")
 
 
 # ── Commands ─────────────────────────────────────────────────────────────────
@@ -138,7 +329,23 @@ def print_table(rows, headers, raw_json: bool = False):
 def cmd_health(args):
     """Check Master health."""
     result = request("GET", "/health", args.base_url, args.token)
-    output(result, args.json)
+    if args.json:
+        output(result, raw_json=True)
+        return
+
+    sc = result.get("status_code", 0)
+    status = result.get("status", "?")
+    uptime = result.get("uptime", 0)
+    workers = result.get("workers", {})
+    orch = result.get("orchestrator", {})
+    sec = result.get("security", {})
+
+    status_color = _ok if sc == 200 else _err
+    print(f"  {_bold('Status:')}     {status_color(status.upper())}")
+    print(f"  {_bold('Uptime:')}     {_fmt_uptime(uptime)}")
+    print(f"  {_bold('Workers:')}    {workers.get('online', 0)} online")
+    print(f"  {_bold('Pending:')}    {orch.get('pending', 0)}")
+    print(f"  {_bold('Approvals:')}  {sec.get('pendingApprovals', 0)}")
 
 
 def cmd_worker_list(args):
@@ -147,27 +354,30 @@ def cmd_worker_list(args):
     if result.get("status_code", 0) >= 400:
         output(result, args.json)
         return
+
+    if args.json:
+        output(result, raw_json=True)
+        return
+
     workers = result.get("workers", [])
     if not workers:
-        print("No workers connected.")
+        print(f"  {_warn('[WARN]')} No workers connected.")
+        print(f"  {_dim('Start a worker: docker compose up -d worker')}")
         return
 
     rows = []
     for w in workers:
-        actions = ", ".join(w.get("actions", [])[:6])
-        rows.append((
-            w.get("worker_id", "?"),
-            f"{w.get('current_load', '?')}/{w.get('max_concurrent', '?')}",
-            w.get("worker_version", "?"),
-            f"{w.get('uptime_seconds', 0)}s",
-            actions,
-        ))
+        actions = ", ".join(w.get("actions", []))
+        version = w.get("worker_version", "?")
+        load = f"{w.get('current_load', '?')}/{w.get('max_concurrent', '?')}"
+        uptime = _fmt_uptime(w.get("uptime_seconds", 0))
+        rows.append((w.get("worker_id", "?"), load, version, uptime, actions))
+
     print_table(rows, ["WORKER ID", "LOAD", "VERSION", "UPTIME", "ACTIONS"], args.json)
 
 
 def cmd_execute(args):
     """Execute a tool action."""
-    # Collect params from key=value positional args.
     params = {}
     for kv in args.params:
         if "=" in kv:
@@ -186,6 +396,11 @@ def cmd_execute(args):
         else:
             params[kv] = True
 
+    if not args.token:
+        print(_err("[ERROR] Authentication required"))
+        print(f"  {_dim('Set CLUSTER_TOKEN env or use --token')}")
+        return
+
     body = {
         "action": args.action,
         "params": params,
@@ -199,18 +414,71 @@ def cmd_execute(args):
         body["ttl_seconds"] = args.ttl
 
     result = request("POST", "/api/v1/execute", args.base_url, args.token, body)
+    sc = result.get("status_code", 0)
+    err = result.get("error", {})
+
+    # Friendly suggestions on errors (Master returns 200 with failure status
+    # for routing errors, and 4xx for envelope/auth errors).
+    err_code = ""
+    if isinstance(err, dict):
+        err_code = err.get("code", "")
+    elif sc >= 400:
+        err_code = "HTTP_ERROR"
+
+    if err_code == "NO_AVAILABLE_WORKER":
+        suggestions = _suggest_actions(args.action, _fetch_actions(args.base_url, args.token))
+        if suggestions:
+            print(f"  {_err('[ERROR]')} Action '{args.action}' not available.")
+            print(f"  {_dim('Did you mean:')} {', '.join(_c(s, C.CYAN) for s in suggestions)}")
+            print(f"  {_dim('See: gaiops execute --help for all actions')}")
+            return
+        print(_err("[ERROR] No worker online that supports this action"))
+        print(f"  {_dim('Check: gaiops worker list')}")
+        return
+
     output(result, args.json)
 
-    # If we got a msg_id, show the poll command.
     msg_id = result.get("msg_id", "")
     if msg_id:
-        print(f"\nPoll result: gaiops result {msg_id}")
+        if result.get("status") == "pending" and args.wait:
+            final = _poll_until_done(msg_id, args.base_url, args.token)
+            if final:
+                print()
+                output(final, args.json)
+        elif result.get("status") == "pending":
+            print(f"\n  {_info('Poll:')} gaiops result {msg_id[:16]}...")
+            print(f"  {_dim('Auto-poll:')} gaiops execute --wait {args.action} <params>")
 
 
 def cmd_result(args):
     """Get execution result by msg_id."""
-    result = request("GET", f"/api/v1/result/{args.msg_id}", args.base_url, args.token)
-    output(result, args.json)
+    if args.watch:
+        print(f"  {_info('Watching')} result for {args.msg_id[:16]}... ({_dim('Ctrl+C to stop')})")
+
+    deadline = time.time() + 300
+    while time.time() < deadline:
+        result = request("GET", f"/api/v1/result/{args.msg_id}", args.base_url, args.token)
+        status = result.get("payload", {}).get("status", "")
+
+        if args.watch:
+            ts = _fmt_timestamp()
+            sc = result.get("status_code", 0)
+            if sc == 404:
+                print(f"  [{_dim(ts)}] {_warn('pending')} — still processing...")
+            elif status == "pending":
+                print(f"  [{_dim(ts)}] {_warn('pending')}")
+            else:
+                print(f"  [{_dim(ts)}] {_ok(status)} — done")
+                print()
+                output(result, args.json)
+                return
+        else:
+            output(result, args.json)
+            return
+
+        time.sleep(2)
+
+    print(_err(f"[TIMEOUT] Result not ready after 300s"))
 
 
 def cmd_approve(args):
@@ -228,18 +496,23 @@ def cmd_reject(args):
 def cmd_trace_list(args):
     """List recent traces."""
     result = request("GET", "/api/v1/traces", args.base_url, args.token)
+    if args.json:
+        output(result, raw_json=True)
+        return
+
     traces = result.get("traces", result.get("data", []))
     if isinstance(traces, list) and traces:
         rows = []
         for t in traces[:20]:
-            rows.append((
-                t.get("trace_id", "?")[:16],
-                t.get("status", "?"),
-                t.get("action", ""),
-            ))
+            tid = t.get("trace_id", "?")[:16]
+            status = t.get("status", "?")
+            action = t.get("action", "")
+            rows.append((tid, status, action))
         print_table(rows, ["TRACE ID", "STATUS", "ACTION"], args.json)
+    elif isinstance(traces, list):
+        print(f"  {_dim('No traces yet')}")
     else:
-        print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+        output(result, args.json)
 
 
 def cmd_trace_get(args):
@@ -253,27 +526,146 @@ def cmd_config_init(args):
     base_url = args.base_url or input(f"Master URL [{DEFAULT_BASE_URL}]: ").strip() or DEFAULT_BASE_URL
     token = args.token or os.environ.get("CLUSTER_TOKEN", "") or input("Cluster token: ").strip()
     save_config(base_url, token)
-    print(f"Config saved to {CONFIG_PATH}")
-    print(f"  base_url = {base_url}")
-    print(f"  token    = {'***' if token else '(empty)'}")
+    print(f"  {_ok('Config saved')} to {CONFIG_PATH}")
+    print(f"    base_url = {base_url}")
+    print(f"    token    = {_bold('***') if token else _dim('(empty)')}")
 
 
 def cmd_config_show(args):
     """Show current config."""
     if not CONFIG_PATH.exists():
-        print(f"No config file at {CONFIG_PATH}")
-        print(f"Run 'gaiops config init' to create one.")
+        print(f"  {_warn('No config file')} at {CONFIG_PATH}")
+        print(f"  {_dim('Run: gaiops config init')}")
         return
     cfg = load_config()
-    print(f"Config file: {CONFIG_PATH}")
-    print(f"  base_url = {cfg.get('defaults', 'base_url', fallback=DEFAULT_BASE_URL)}")
+    print(f"  {_bold('Config file:')} {CONFIG_PATH}")
+    print(f"    base_url = {cfg.get('defaults', 'base_url', fallback=DEFAULT_BASE_URL)}")
     token = cfg.get("defaults", "token", fallback="")
-    print(f"  token    = {'***' if token else '(empty)'}")
-    print(f"\nEnvironment:")
-    print(f"  CLUSTER_TOKEN = {'***' if os.environ.get('CLUSTER_TOKEN') else '(not set)'}")
+    print(f"    token    = {_bold('***') if token else _dim('(empty)')}")
+    print(f"\n  {_bold('Environment:')}")
+    env_token = os.environ.get("CLUSTER_TOKEN")
+    print(f"    CLUSTER_TOKEN = {_bold('***') if env_token else _dim('(not set)')}")
 
 
-# ── Main ─────────────────────────────────────────────────────────────────────
+def cmd_completion(args):
+    """Generate shell completion script."""
+    if args.shell == "bash":
+        print(_gen_bash_completion())
+    elif args.shell == "zsh":
+        print(_gen_zsh_completion())
+
+
+def _gen_bash_completion():
+    return """_gaiops_complete() {
+    local cur prev words cword
+    _init_completion || return
+
+    local commands="health worker execute result approve reject trace config completion"
+    local worker_sub="list"
+    local trace_sub="list get"
+    local config_sub="init show"
+
+    case $prev in
+        gaiops)
+            COMPREPLY=($(compgen -W "$commands" -- "$cur"))
+            ;;
+        worker)
+            COMPREPLY=($(compgen -W "$worker_sub" -- "$cur"))
+            ;;
+        trace)
+            COMPREPLY=($(compgen -W "$trace_sub" -- "$cur"))
+            ;;
+        config)
+            COMPREPLY=($(compgen -W "$config_sub" -- "$cur"))
+            ;;
+        execute|result|approve|reject|get)
+            # no completion for IDs/actions
+            ;;
+        --token|--base-url)
+            # file or URL completion, skip
+            ;;
+        *)
+            if [[ $cur == --* ]]; then
+                COMPREPLY=($(compgen -W "--base-url --token --json --help --version" -- "$cur"))
+            fi
+            ;;
+    esac
+} &&
+complete -F _gaiops_complete gaiops
+"""
+
+
+def _gen_zsh_completion():
+    return """#compdef gaiops
+
+_gaiops_commands() {
+    local -a commands
+    commands=(
+        'health:Check Master health'
+        'worker:Worker operations (list)'
+        'execute:Execute a tool action'
+        'result:Get execution result'
+        'approve:Approve high-risk operation'
+        'reject:Reject high-risk operation'
+        'trace:Trace operations (list, get)'
+        'config:Configuration management (init, show)'
+        'completion:Generate shell completion'
+    )
+    _describe -t commands 'gaiops' commands
+}
+
+_gaiops() {
+    local context state line
+    typeset -A opt_args
+
+    _arguments -C \\
+        '--base-url[Master API URL]:url' \\
+        '--token[Cluster token]:token' \\
+        '--json[Raw JSON output]' \\
+        '--help[Show help]' \\
+        '--version[Show version]' \\
+        '1: :->command' \\
+        '*:: :->args'
+
+    case $state in
+        command)
+            _gaiops_commands
+            ;;
+        args)
+            case $words[1] in
+                worker)
+                    _arguments '2: :(list)'
+                    ;;
+                trace)
+                    _arguments '2: :(list get)'
+                    ;;
+                config)
+                    _arguments '2: :(init show)'
+                    ;;
+                execute)
+                    _arguments \\
+                        '--target-worker[Route to specific Worker]' \\
+                        '--trace-id[Trace ID]' \\
+                        '--priority[Priority 0-2]' \\
+                        '--ttl[TTL seconds]' \\
+                        '--wait[Wait for result]'
+                    ;;
+                result)
+                    _arguments '--watch[Auto-refresh until done]'
+                    ;;
+                completion)
+                    _arguments '2: :(bash zsh)'
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+_gaiops "$@"
+"""
+
+
+# ── Parser ───────────────────────────────────────────────────────────────────
 
 
 def build_parser():
@@ -307,16 +699,27 @@ def build_parser():
     # execute
     pe = sub.add_parser("execute", help="Execute a tool action")
     pe.add_argument("action", help="Tool action name (e.g. ping.icmp)")
-    pe.add_argument("params", nargs="*", help="Key-value pairs (e.g. target=8.8.8.8 count=3)")
+    pe.add_argument("params", nargs="*", help="Key=value pairs (e.g. target=8.8.8.8 count=3)")
     pe.add_argument("--target-worker", help="Route to a specific Worker")
     pe.add_argument("--trace-id", help="Trace ID (auto-generated if omitted)")
     pe.add_argument("--priority", type=int, choices=[0, 1, 2], help="Priority (0=low, 2=high)")
     pe.add_argument("--ttl", type=int, help="TTL in seconds (1-300)")
+    pe.add_argument("--wait", "-w", action="store_true", help="Wait for result")
+    # Try to inject available actions into help text.
+    try:
+        actions_list = _fetch_actions(default_base_url, env_token)
+        if actions_list:
+            pe.epilog = "Available actions:\n" + "\n".join(
+                f"  {a}" for a in actions_list
+            )
+    except Exception:
+        pass
     pe.set_defaults(func=cmd_execute)
 
     # result
     pr = sub.add_parser("result", help="Get execution result by msg_id")
     pr.add_argument("msg_id", help="Message ID from execute response")
+    pr.add_argument("--watch", "-w", action="store_true", help="Auto-refresh until done")
     pr.set_defaults(func=cmd_result)
 
     # approve
@@ -348,6 +751,11 @@ def build_parser():
     pcs = pc_sub.add_parser("show", help="Show current config")
     pcs.set_defaults(func=cmd_config_show)
 
+    # completion
+    pcomp = sub.add_parser("completion", help="Generate shell completion script")
+    pcomp.add_argument("shell", choices=["bash", "zsh"], help="Shell type")
+    pcomp.set_defaults(func=cmd_completion)
+
     return parser
 
 
@@ -355,7 +763,6 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
 
-    # Inherit token from env if not set via --token.
     if not args.token and "CLUSTER_TOKEN" in os.environ:
         args.token = os.environ["CLUSTER_TOKEN"]
 
