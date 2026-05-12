@@ -31,6 +31,7 @@ export class Approver {
   constructor(
     private registry: Registry,
     private onReject?: ApprovalCallback,
+    private onApprove?: ApprovalCallback,
   ) {}
 
   requestApproval(env: Envelope, targetWorkerId: string): ApprovalRequest {
@@ -78,6 +79,7 @@ export class Approver {
 
     req.status = "approved";
     this.active.delete(approvalId);
+    this.onApprove?.(req);
     return { success: true, workerStillOnline: true };
   }
 

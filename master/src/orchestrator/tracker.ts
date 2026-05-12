@@ -10,6 +10,11 @@ interface PendingEntry {
   retryCount: number;
 }
 
+interface CompletedEntry {
+  response: Envelope;
+  completedAt: number;
+}
+
 interface ChunkGroup {
   traceId: string;
   chunks: Map<number, string>;
@@ -21,6 +26,10 @@ export class Tracker {
   private pending = new Map<string, PendingEntry>();
   private readonly MAX_PENDING = 10_000;
   private readonly ORPHAN_TTL_MS = 300_000; // 5 min
+
+  private completed = new Map<string, CompletedEntry>();
+  private readonly MAX_COMPLETED = 10_000;
+  private readonly COMPLETED_TTL_MS = 300_000; // 5 min
 
   private chunkGroups = new Map<string, ChunkGroup>();
   private readonly CHUNK_TIMEOUT_MS = 30_000;
@@ -42,7 +51,15 @@ export class Tracker {
     return true;
   }
 
-  resolve(msgId: string): void {
+  resolve(msgId: string, response?: Envelope): void {
+    if (response) {
+      if (this.completed.size >= this.MAX_COMPLETED) {
+        // Evict oldest entry to stay under limit.
+        const oldest = this.completed.entries().next().value;
+        if (oldest) this.completed.delete(oldest[0]);
+      }
+      this.completed.set(msgId, { response, completedAt: Date.now() });
+    }
     this.pending.delete(msgId);
   }
 
@@ -58,7 +75,7 @@ export class Tracker {
     return result;
   }
 
-  /** Reap expired orphan requests (Brain disconnected mid-flight). */
+  /** Reap expired orphan requests (Brain disconnected mid-flight) and stale completed results. */
   reapOrphans(): number {
     const now = Date.now();
     let reaped = 0;
@@ -68,12 +85,36 @@ export class Tracker {
         reaped++;
       }
     }
+    reaped += this.reapCompleted();
     return reaped;
   }
 
   /** Number of pending entries. */
   pendingCount(): number {
     return this.pending.size;
+  }
+
+  /** Retrieve a completed result by msg_id. */
+  getCompleted(msgId: string): CompletedEntry | undefined {
+    return this.completed.get(msgId);
+  }
+
+  /** Iterate all completed entries (for trace lookup). */
+  getCompletedEntries(): Map<string, CompletedEntry> {
+    return this.completed;
+  }
+
+  /** Reap completed entries older than TTL. */
+  reapCompleted(maxAgeMs: number = this.COMPLETED_TTL_MS): number {
+    const now = Date.now();
+    let reaped = 0;
+    for (const [msgId, entry] of this.completed.entries()) {
+      if (now - entry.completedAt > maxAgeMs) {
+        this.completed.delete(msgId);
+        reaped++;
+      }
+    }
+    return reaped;
   }
 
   // ── Chunk assembly ─────────────────────────────────────────────────

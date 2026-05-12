@@ -120,6 +120,7 @@ class GraphEngine:
                         action=step["action"],
                         params=step.get("params", {}),
                         trace_id=state.trace_id,
+                        target_worker_id=step.get("target_worker_id"),
                     )
 
                     state.last_status = result.get("status", "failure")
@@ -190,6 +191,26 @@ class GraphEngine:
             return None
 
         system_content = SYSTEM_PROMPT.format(tool_descriptions=self._tool_descriptions)
+
+        # Append available Worker context for target_worker_id routing.
+        try:
+            workers = await self.master.list_workers()
+            if workers:
+                worker_lines = ["\nAvailable workers:"]
+                for w in workers:
+                    actions = ", ".join(w.get("actions", [])[:8])
+                    wl = w.get("current_load", 0)
+                    mc = w.get("max_concurrent", 1)
+                    worker_lines.append(
+                        f"  - {w['worker_id']}: [{wl}/{mc} load] {actions}"
+                    )
+                worker_lines.append(
+                    'Use "target_worker_id" to direct a tool to a specific worker. '
+                    "If not specified, Master routes to the least-loaded worker."
+                )
+                system_content += "\n" + "\n".join(worker_lines)
+        except Exception:
+            pass  # Worker list is advisory; proceed without it.
 
         if state.summaries:
             history = "\n".join(state.summaries[-5:])

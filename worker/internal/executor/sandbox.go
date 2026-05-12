@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gaiops/worker/internal/registry"
+	"github.com/gaiops/worker/internal/safety"
 )
 
 // ToolResult is the unified return type for every tool execution.
@@ -103,12 +104,14 @@ func (e *Executor) Run(ctx context.Context, action string, params map[string]int
 	// Panic guard.
 	defer func() {
 		if r := recover(); r != nil {
+			raw := fmt.Sprintf("%v", r)
+			truncatedRaw, _, _ := safety.TruncateErrorRaw(raw)
 			result = ToolResult{
 				Success: false,
 				Error: &ToolError{
 					Code:    "TOOL_PANIC",
 					Message: fmt.Sprintf("tool %s panicked", action),
-					Raw:     fmt.Sprintf("%v", r),
+					Raw:     truncatedRaw,
 				},
 			}
 			fmt.Fprintf(os.Stderr, "[PANIC] tool=%s panic=%v\n", action, r)
@@ -146,12 +149,13 @@ func (e *Executor) Run(ctx context.Context, action string, params map[string]int
 				code = te.Code
 				msg = te.Message
 			}
+			truncatedRaw, _, _ := safety.TruncateErrorRaw(msg)
 			return ToolResult{
 				Success: false,
 				Error: &ToolError{
 					Code:    code,
 					Message: msg,
-					Raw:     msg,
+					Raw:     truncatedRaw,
 				},
 			}
 		}

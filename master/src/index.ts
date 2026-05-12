@@ -49,12 +49,6 @@ function main(): void {
 
   // ── Security ──
   const interceptor = new Interceptor(registry, cfg.security.high_risk_actions);
-  const approver = new Approver(registry, (req) => {
-    logger.warn("Approval rejected or expired", {
-      msg_id: req.id,
-      data: { action: req.envelope.payload.action, status: req.status },
-    });
-  });
 
   // ── Server ──
   const app = express();
@@ -69,6 +63,22 @@ function main(): void {
 
   const wsServer = new WebSocketServer(registry, tracker, masterRouter, queue, cfg.cluster_token, cfg.server.ws);
   wsServer.attach(server);
+
+  // Approver needs wsServer for the onApprove callback.
+  const approver = new Approver(
+    registry,
+    (req) => {
+      logger.warn("Approval rejected or expired", {
+        msg_id: req.id,
+        data: { action: req.envelope.payload.action, status: req.status },
+      });
+    },
+    (req) => {
+      req.envelope.source = "master";
+      req.envelope.source_id = "master";
+      wsServer.sendToWorker(req.targetWorkerId, req.envelope);
+    },
+  );
 
   // ── Routes ──
   app.use(healthRouter(registry, tracker, approver));

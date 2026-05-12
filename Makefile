@@ -166,6 +166,44 @@ dev-trace:
 	@if [ -z "$(T)" ]; then echo "Usage: make dev-trace T=<trace_id>"; exit 1; fi
 	@grep "$(T)" /tmp/gaiops/logs/*.log 2>/dev/null | sort || echo "No entries found for trace_id=$(T)"
 
+# === 端到端测试 ===
+
+.PHONY: test-e2e test-e2e-docker test-e2e-local test-e2e-clean
+
+test-e2e: test-e2e-local
+
+test-e2e-local:
+	@echo "[+] Running E2E tests (local mode — requires running services)..."
+	cd e2e && python -m pytest -v --tb=short --e2e --base-url http://localhost:8080
+
+test-e2e-docker:
+	@echo "[+] Building images..."
+	docker compose build master worker
+	@echo "[+] Starting services..."
+	CLUSTER_TOKEN=e2e-test-token \
+	docker compose -f docker-compose.yml \
+	               -f e2e/docker-compose.e2e.yml \
+	               up --wait --wait-timeout 120 master worker
+	@echo "[+] Running E2E tests..."
+	docker compose -f docker-compose.yml \
+	               -f e2e/docker-compose.e2e.yml \
+	               run --rm e2e-runner || ( \
+	  echo "[-] Tests failed. Fetching logs..." && \
+	  docker compose -f docker-compose.yml -f e2e/docker-compose.e2e.yml \
+	    logs master worker --tail=50 && \
+	  $(MAKE) test-e2e-clean && \
+	  exit 1 )
+	@$(MAKE) test-e2e-clean
+	@echo "[+] E2E tests passed"
+
+test-e2e-logs:
+	docker compose -f docker-compose.yml -f e2e/docker-compose.e2e.yml \
+	  logs master worker --tail=50
+
+test-e2e-clean:
+	docker compose -f docker-compose.yml -f e2e/docker-compose.e2e.yml \
+	  down -v
+
 # === 清理 ===
 
 clean:

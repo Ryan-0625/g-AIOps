@@ -11,6 +11,7 @@ import (
 
 	"github.com/gaiops/worker/internal/executor"
 	"github.com/gaiops/worker/internal/registry"
+	"github.com/gaiops/worker/internal/safety"
 )
 
 func init() {
@@ -126,10 +127,10 @@ func executeExecRun(ctx context.Context, params map[string]interface{}) (map[str
 				fmt.Sprintf("command %q timed out after %v", command, timeout))
 		}
 		return map[string]interface{}{
-			"command":  command,
-			"args":     args,
+			"command":   command,
+			"args":      args,
 			"exit_code": 1,
-			"stdout":    string(out),
+			"stdout":    safety.FilterSensitive(string(out)),
 			"error":     err.Error(),
 		}, nil
 	}
@@ -138,6 +139,6 @@ func executeExecRun(ctx context.Context, params map[string]interface{}) (map[str
 		"command":   command,
 		"args":      args,
 		"exit_code": 0,
-		"stdout":    string(out),
+		"stdout":    safety.FilterSensitive(string(out)),
 	}, nil
 }

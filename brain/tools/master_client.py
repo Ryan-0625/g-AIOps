@@ -61,6 +61,10 @@ class MasterClient:
             max_requests=max_requests_per_minute,
             window_seconds=60,
         )
+        # Worker list cache.
+        self._workers_cache: list[dict[str, Any]] | None = None
+        self._workers_cache_at: float = 0.0
+        self._workers_cache_ttl: float = 30.0
 
     async def _ensure_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -81,6 +85,7 @@ class MasterClient:
         trace_id: str | None = None,
         priority: int = 0,
         ttl_seconds: int = 30,
+        target_worker_id: str | None = None,
     ) -> dict[str, Any]:
         """Send an instruction to Master.
 
@@ -138,6 +143,8 @@ class MasterClient:
             "priority": priority,
             "ttl_seconds": ttl_seconds,
         }
+        if target_worker_id:
+            body["target_worker_id"] = target_worker_id
 
         session = await self._ensure_session()
         headers = {
@@ -168,6 +175,36 @@ class MasterClient:
                 "action": action,
                 "error": {"code": "MASTER_UNREACHABLE", "message": str(e)},
             }
+
+    async def list_workers(self) -> list[dict[str, Any]]:
+        """Fetch the list of available Workers from Master.
+
+        Results are cached for ``_workers_cache_ttl`` seconds to reduce
+        API overhead on repeated calls within a single planning cycle.
+        Returns an empty list on error (caller should treat this as advisory).
+        """
+        now = time.monotonic()
+        if self._workers_cache is not None and (now - self._workers_cache_at) < self._workers_cache_ttl:
+            return self._workers_cache
+
+        session = await self._ensure_session()
+        headers = {
+            "Authorization": f"Bearer {self.cluster_token}",
+        }
+        try:
+            async with session.get(
+                f"{self.api_url}/api/v1/workers",
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=self.timeout),
+            ) as resp:
+                data = await resp.json()
+                workers = data.get("workers", [])
+                self._workers_cache = workers
+                self._workers_cache_at = now
+                return workers
+        except Exception:
+            logger.warning("Failed to fetch worker list from Master")
+            return []
 
     async def close(self) -> None:
         if self._session and not self._session.closed:

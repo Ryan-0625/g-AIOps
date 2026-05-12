@@ -49,6 +49,7 @@ type Config struct {
 	HeartbeatInterval  int             `yaml:"heartbeat_interval"`
 	Reconnect          ReconnectConfig `yaml:"reconnect"`
 	MaxConcurrentTools int             `yaml:"max_concurrent_tools"`
+	DataDir            string          `yaml:"data_dir"`
 	Logging            LoggingConfig   `yaml:"logging"`
 	AllowedLogPaths    []string        `yaml:"allowed_log_paths"`
 	AllowedDiskPaths   []string        `yaml:"allowed_disk_paths"`
@@ -63,6 +64,7 @@ func defaultConfig() Config {
 	return Config{
 		HeartbeatInterval:  15,
 		MaxConcurrentTools: 5,
+		DataDir:            "/var/lib/gaiops/worker",
 		Logging: LoggingConfig{
 			Level:  "info",
 			Format: "json",
@@ -98,6 +100,17 @@ func Load(path string) (*Config, []error) {
 
 	absPath, _ := filepath.Abs(path)
 	cfg.CredentialsPath = resolveRef(absPath, cfg.CredentialsPath)
+
+	// Environment variable overrides (highest priority).
+	if v := os.Getenv("CLUSTER_TOKEN"); v != "" {
+		cfg.ClusterToken = v
+	}
+	if v := os.Getenv("WORKER_ID"); v != "" {
+		cfg.WorkerID = v
+	}
+	if v := os.Getenv("MASTER_URL"); v != "" {
+		cfg.MasterURL = v
+	}
 
 	errs := validate(&cfg)
 	if len(errs) > 0 {

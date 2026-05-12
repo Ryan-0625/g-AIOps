@@ -9,6 +9,7 @@ import (
 
 	"github.com/gaiops/worker/internal/executor"
 	"github.com/gaiops/worker/internal/registry"
+	"github.com/gaiops/worker/internal/safety"
 )
 
 func init() {
@@ -51,7 +52,7 @@ func executeLogTail(ctx context.Context, params map[string]interface{}) (map[str
 				"log.tail cancelled: context done")
 		default:
 		}
-		ring = append(ring, scanner.Text())
+		ring = append(ring, safety.FilterSensitive(scanner.Text()))
 		if len(ring) > lines {
 			ring = ring[1:]
 		}

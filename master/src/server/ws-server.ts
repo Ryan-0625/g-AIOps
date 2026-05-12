@@ -140,6 +140,12 @@ export class WebSocketServer {
         if (entry) entry.lastPong = Date.now();
       });
 
+      // Worker sends Ping frames as heartbeats — track as liveness.
+      ws.on("ping", () => {
+        const entry = findEntry(this.connections, ws);
+        if (entry) entry.lastPong = Date.now();
+      });
+
       ws.on("close", () => {
         const entry = findEntry(this.connections, ws);
         if (entry) {
@@ -209,9 +215,7 @@ export class WebSocketServer {
   }
 
   private handleWorkerResponse(env: Envelope): void {
-    if (env.correlation_id) this.tracker.resolve(env.correlation_id);
-    // The response will be forwarded to Brain via the tracker's callback
-    // mechanism. For now, responses are logged and summarised.
+    if (env.correlation_id) this.tracker.resolve(env.correlation_id, env);
     logger.info("Worker response", {
       msg_id: env.msg_id,
       data: { action: env.payload.action, status: env.payload.status },

@@ -63,11 +63,14 @@ class FakeMasterClient:
             "truncated": truncated,
         })
 
-    async def execute(self, action, params=None, trace_id="", priority=0, ttl_seconds=30):
-        self.executions.append({"action": action, "params": params})
+    async def execute(self, action, params=None, trace_id="", priority=0, ttl_seconds=30, target_worker_id=None):
+        self.executions.append({"action": action, "params": params, "target_worker_id": target_worker_id})
         if self.responses:
             return self.responses.pop(0)
         return {"status": "success", "data": {}, "truncated": False}
+
+    async def list_workers(self):
+        return []
 
 
 class TestGraphEngine:

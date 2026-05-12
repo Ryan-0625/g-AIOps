@@ -19,6 +19,20 @@ func init() {
 		RiskLevel:    "readonly",
 		Execute:      executeServiceStatus,
 	})
+	registry.Global.Register(registry.Tool{
+		Action:       "service.restart",
+		Timeout:      30 * time.Second,
+		IsIdempotent: false,
+		RiskLevel:    "high",
+		Execute:      executeServiceRestart,
+	})
+	registry.Global.Register(registry.Tool{
+		Action:       "service.stop",
+		Timeout:      30 * time.Second,
+		IsIdempotent: false,
+		RiskLevel:    "high",
+		Execute:      executeServiceStop,
+	})
 }
 
 func executeServiceStatus(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
@@ -42,5 +56,43 @@ func executeServiceStatus(ctx context.Context, params map[string]interface{}) (m
 		"name":    name,
 		"status":  status,
 		"running": running,
+	}, nil
+}
+
+func executeServiceRestart(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	name, _ := params["name"].(string)
+	if name == "" {
+		return nil, executor.NewErr("INVALID_PARAMS", "service name is required")
+	}
+
+	cmd := exec.CommandContext(ctx, "systemctl", "restart", name)
+	if err := cmd.Run(); err != nil {
+		return nil, executor.NewErr("SERVICE_NOT_FOUND",
+			fmt.Sprintf("failed to restart service %q: %v", name, err))
+	}
+
+	return map[string]interface{}{
+		"name":    name,
+		"status":  "restarted",
+		"running": true,
+	}, nil
+}
+
+func executeServiceStop(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	name, _ := params["name"].(string)
+	if name == "" {
+		return nil, executor.NewErr("INVALID_PARAMS", "service name is required")
+	}
+
+	cmd := exec.CommandContext(ctx, "systemctl", "stop", name)
+	if err := cmd.Run(); err != nil {
+		return nil, executor.NewErr("SERVICE_NOT_FOUND",
+			fmt.Sprintf("failed to stop service %q: %v", name, err))
+	}
+
+	return map[string]interface{}{
+		"name":    name,
+		"status":  "inactive",
+		"running": false,
 	}, nil
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/gaiops/worker/internal/executor"
 	"github.com/gaiops/worker/internal/logger"
+	"github.com/gaiops/worker/internal/registry"
 	"github.com/gaiops/worker/internal/reporter"
 	"github.com/gaiops/worker/pkg/envelope"
 )
@@ -33,6 +34,7 @@ type Client struct {
 
 // Config groups connection-related parameters.
 type Config struct {
+	WorkerID          string
 	MasterURL         string
 	ClusterToken      string
 	HeartbeatInterval int // seconds
@@ -284,6 +286,17 @@ func (c *Client) SendEnvelope(env *envelope.Envelope) {
 	c.send(env)
 }
 
+// ReAdvertise re-announces capabilities to Master, picking up any
+// dynamically registered tools from the global registry.
+func (c *Client) ReAdvertise() {
+	c.SendCapabilityAdvertise(
+		registry.Global.Actions(),
+		registry.Global.RiskLevels(),
+		c.config.MaxConcurrent,
+		c.config.WorkerVersion,
+	)
+}
+
 // SendCapabilityAdvertise announces supported actions to Master.
 func (c *Client) SendCapabilityAdvertise(actions []string, riskLevels map[string]string, maxConcurrent int, version string) {
 	env := &envelope.Envelope{
@@ -292,6 +305,7 @@ func (c *Client) SendCapabilityAdvertise(actions []string, riskLevels map[string
 		MsgType:      envelope.MsgEvent,
 		Timestamp:    time.Now().Unix(),
 		Source:       envelope.RoleWorker,
+		SourceID:     c.config.WorkerID,
 		Target:       envelope.RoleMaster,
 		Payload: envelope.Payload{
 			Action: "capability.advertise",

@@ -50,6 +50,28 @@ func (r *Registry) Register(t Tool) {
 	r.tools[t.Action] = &t
 }
 
+// RegisterDynamic registers or updates a tool at runtime. Unlike Register,
+// it does not panic on duplicates — it replaces the existing entry.
+// Safe for concurrent use.
+func (r *Registry) RegisterDynamic(t Tool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if t.Timeout <= 0 {
+		t.Timeout = 30 * time.Second
+	}
+	if t.RiskLevel == "" {
+		t.RiskLevel = "readonly"
+	}
+	r.tools[t.Action] = &t
+}
+
+// Unregister removes a tool from the registry. Used for dynamic tool cleanup.
+func (r *Registry) Unregister(action string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.tools, action)
+}
+
 func (r *Registry) Lookup(action string) (*Tool, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

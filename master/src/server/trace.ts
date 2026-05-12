@@ -25,9 +25,11 @@ export function traceRouter(tracker: Tracker): Router {
   // GET /api/v1/trace/:trace_id — return entries for a specific trace
   router.get("/api/v1/trace/:trace_id", (req: Request, res: Response) => {
     const traceId = req.params.trace_id;
-    const pending = tracker.getPending();
-    const entries = [];
-    for (const [msgId, entry] of pending) {
+    const entries: Record<string, unknown>[] = [];
+    const now = Date.now();
+
+    // Search pending entries.
+    for (const [msgId, entry] of tracker.getPending()) {
       if (entry.envelope.trace_id === traceId) {
         entries.push({
           msg_id: msgId,
@@ -39,6 +41,20 @@ export function traceRouter(tracker: Tracker): Router {
         });
       }
     }
+
+    // Search completed entries (already resolved by the Worker).
+    for (const [msgId, completed] of tracker.getCompletedEntries()) {
+      if (completed.response.trace_id === traceId) {
+        entries.push({
+          msg_id: msgId,
+          trace_id: completed.response.trace_id,
+          action: completed.response.payload.action,
+          status: completed.response.payload.status,
+          completed_at: completed.completedAt,
+        });
+      }
+    }
+
     if (entries.length === 0) {
       res.status(404).json({ error: { code: "TRACE_NOT_FOUND", message: `No entries for trace: ${traceId}` } });
       return;

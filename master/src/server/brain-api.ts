@@ -57,10 +57,11 @@ export function brainApiRouter(
 ): Router {
   const router = Router();
 
-  // Rate limit: 120 req/min per Brain instance.
+  // Rate limit: 120 req/min per Brain instance (configurable via RATE_LIMIT_MAX env).
+  const rateLimitMax = parseInt(process.env.RATE_LIMIT_MAX || "120", 10);
   const limiter = rateLimit({
     windowMs: 60_000,
-    max: 120,
+    max: rateLimitMax,
     message: { status: "failure", error: { code: "RATE_LIMITED", message: "Too many requests" } },
     handler: (req: Request, res: Response) => {
       writeAuditEvent({
@@ -114,6 +115,33 @@ export function brainApiRouter(
       return;
     }
     res.json({ status: "success", message: "Rejected" });
+  });
+
+  // ── Worker discovery ──
+  router.get("/api/v1/workers", (req: Request, res: Response) => {
+    const token = extractBearer(req.headers.authorization);
+    if (!token || !authenticate(token, clusterToken)) {
+      res.status(401).json({ status: "failure", error: { code: "AUTH_FAILED", message: "Invalid token" } });
+      return;
+    }
+    const workers = registry.listWorkers();
+    res.json({ workers });
+  });
+
+  // ── Result polling ──
+  router.get("/api/v1/result/:msg_id", (req: Request, res: Response) => {
+    const token = extractBearer(req.headers.authorization);
+    if (!token || !authenticate(token, clusterToken)) {
+      res.status(401).json({ status: "failure", error: { code: "AUTH_FAILED", message: "Invalid token" } });
+      return;
+    }
+
+    const entry = tracker.getCompleted(req.params.msg_id);
+    if (!entry) {
+      res.status(404).json({ status: "failure", error: { code: "RESULT_NOT_FOUND", message: "Result not found or expired" } });
+      return;
+    }
+    res.json(entry.response);
   });
 
   router.post("/api/v1/execute", limiter, (req: Request, res: Response) => {
@@ -216,6 +244,8 @@ export function brainApiRouter(
     }
 
     // ── Queue & forward ──
+    env.source = "master";
+    env.source_id = "master";
     queue.push(env);
     tracker.track(msgId, env, route.workerId);
     wsServer.sendToWorker(route.workerId, env);

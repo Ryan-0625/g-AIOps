@@ -108,6 +108,40 @@ export class Registry {
     return this.workers.size;
   }
 
+  /** List all registered workers (for Brain discovery). */
+  listWorkers(): Array<{
+    worker_id: string;
+    actions: string[];
+    risk_levels: Record<string, string>;
+    max_concurrent: number;
+    current_load: number;
+    worker_version: string;
+    uptime_seconds: number;
+  }> {
+    const now = Date.now();
+    const result: Array<{
+      worker_id: string;
+      actions: string[];
+      risk_levels: Record<string, string>;
+      max_concurrent: number;
+      current_load: number;
+      worker_version: string;
+      uptime_seconds: number;
+    }> = [];
+    for (const w of this.workers.values()) {
+      result.push({
+        worker_id: w.workerId,
+        actions: w.caps.actions,
+        risk_levels: w.caps.riskLevels,
+        max_concurrent: w.caps.maxConcurrent,
+        current_load: w.currentLoad,
+        worker_version: w.caps.workerVersion,
+        uptime_seconds: Math.floor((now - w.connectedAt) / 1000),
+      });
+    }
+    return result;
+  }
+
   /** Get risk level for a specific action.
    *
    * Returns "unknown" when no worker has advertised a risk level for this

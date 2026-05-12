@@ -23,9 +23,11 @@ async def planner_node(state: GraphState, llm_response: str | None = None) -> Gr
             return state
 
         if sanitized.action:
-            state.plan = [
-                {"action": sanitized.action, "params": sanitized.params}
-            ]
+            step = {"action": sanitized.action, "params": sanitized.params}
+            # Extract target_worker_id from params if present.
+            if isinstance(sanitized.params, dict) and "target_worker_id" in sanitized.params:
+                step["target_worker_id"] = sanitized.params.pop("target_worker_id")
+            state.plan = [step]
             state.add_summary(f"Plan: {sanitized.action}")
 
     logger.info("Planner ready", extra={"data": {"steps": len(state.plan), "trace_id": state.trace_id}})

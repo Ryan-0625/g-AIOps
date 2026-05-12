@@ -49,6 +49,7 @@ func main() {
 	}))
 
 	client := connection.New(connection.Config{
+		WorkerID:          cfg.WorkerID,
 		MasterURL:         cfg.MasterURL,
 		ClusterToken:      cfg.ClusterToken,
 		HeartbeatInterval: cfg.HeartbeatInterval,
@@ -58,12 +59,21 @@ func main() {
 		RiskLevels:        registry.Global.RiskLevels(),
 		MaxConcurrent:     cfg.MaxConcurrentTools,
 		WorkerVersion:     "0.1.0",
-t		TLSSkipVerify:     cfg.TLSSkipVerify,
-	}, exec)
+		TLSSkipVerify:     cfg.TLSSkipVerify,
+	}, exec, log)
 
 	// Reporter sends periodic heartbeat envelopes to Master.
 	rep := reporter.New(cfg.HeartbeatInterval, len(registry.Global.Actions()), client.SendEnvelope, log)
 	client.SetReporter(rep)
+
+	// Dynamic tool manager — enables runtime tool.create and tool.delete.
+	dm := tools.NewDynamicManager(cfg.DataDir, func() {
+		client.ReAdvertise()
+	})
+	tools.SetDynamicManager(dm)
+	log.Info("Dynamic tool manager initialised", logger.WithData(map[string]interface{}{
+		"data_dir": cfg.DataDir,
+	}))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

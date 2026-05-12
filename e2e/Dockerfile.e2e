@@ -1,0 +1,16 @@
+FROM python:3.12-alpine
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apk add --no-cache ca-certificates
+
+# Install Python test dependencies
+COPY e2e/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy entire project (needed for e2e helpers and fixtures)
+COPY . .
+
+ENTRYPOINT ["python", "-m", "pytest"]
+CMD ["e2e/", "--e2e", "-v", "--tb=short"]

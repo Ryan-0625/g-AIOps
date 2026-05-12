@@ -14,6 +14,8 @@ FROM node:20-alpine
 
 RUN apk add --no-cache tzdata wget
 
+RUN mkdir -p /var/log/gaiops
+
 WORKDIR /app
 COPY --from=builder /src/dist ./dist
 COPY --from=builder /src/node_modules ./node_modules

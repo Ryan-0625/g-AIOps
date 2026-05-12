@@ -1,5 +1,6 @@
 import { Envelope } from "../protocol/types";
-import { createWriteStream, WriteStream } from "fs";
+import { createWriteStream, mkdirSync, WriteStream } from "fs";
+import { dirname } from "path";
 
 export interface AuditConfig {
   logPath?: string;
@@ -25,6 +26,7 @@ let auditStream: WriteStream | null = null;
 export function configureAudit(cfg: AuditConfig): void {
   if (!cfg.enabled) return;
   if (cfg.logPath) {
+    mkdirSync(dirname(cfg.logPath), { recursive: true });
     auditStream = createWriteStream(cfg.logPath, { flags: "a" });
     auditStream.write(`# audit started ${new Date().toISOString()}\n`);
   }
