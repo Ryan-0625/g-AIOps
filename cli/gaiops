@@ -50,27 +50,18 @@ HARDCODED_ACTIONS = [
 
 
 LOGO = r"""
-  {b}==========================================================={b}
-  {b}           g A I O p s    v {ver:<23}{b}
-  {b}       AI Ops Platform -- Three Layers                   {b}
-  {b}                                                         {b}
-  {b}      +------+    +--------+    +------+                 {b}
-  {b}      | Brain|--->| Master |--->|Worker|                 {b}
-  {b}      |Python|<---| Node   |<---|  Go  |                 {b}
-  {b}      +------+    +--------+    +------+                 {b}
-  {b}                                                         {b}
-  {b}==========================================================={b}
+{b}   _____            _____    ____  _____   _____   {b}
+{b}  / ____|     /\   |_   _|  / __ \|  __ \ / ____|  {b}
+{b} | |  __     /  \    | |   | |  | | |__) | (___    {b}
+{b} | | |_ |   / /\ \   | |   | |  | |  ___/ \___ \   {b}
+{b} | |__| |  / ____ \ _| |_  | |__| | |     ____) |  {b}
+{b}  \_____| /_/    \_\_____|  \____/|_|    |_____/   {b}
 """
 
 def _render_logo():
     """Return the colored ASCII logo."""
     b = C.CYAN if _USE_COLOR else ""
-    r = C.RESET if _USE_COLOR else ""
-
-    return LOGO.format(
-        b=b,
-        ver=VERSION.ljust(26),
-    )
+    return LOGO.format(b=b)
 
 
 SHORT_HELP = """  {c}Usage:{r}
