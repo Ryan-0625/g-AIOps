@@ -22,6 +22,7 @@ Common options:
 """
 
 import argparse
+import cmd
 import difflib
 import json
 import os
@@ -45,10 +46,60 @@ HARDCODED_ACTIONS = [
     "tool.create", "tool.delete",
 ]
 
+# ── ASCII Logo ─────────────────────────────────────────────────────────────
+
+
+LOGO = r"""
+  {b}==========================================================={b}
+  {b}           g A I O p s    v {ver:<23}{b}
+  {b}       AI Ops Platform -- Three Layers                   {b}
+  {b}                                                         {b}
+  {b}      +------+    +--------+    +------+                 {b}
+  {b}      | Brain|--->| Master |--->|Worker|                 {b}
+  {b}      |Python|<---| Node   |<---|  Go  |                 {b}
+  {b}      +------+    +--------+    +------+                 {b}
+  {b}                                                         {b}
+  {b}==========================================================={b}
+"""
+
+def _render_logo():
+    """Return the colored ASCII logo."""
+    b = C.CYAN if _USE_COLOR else ""
+    r = C.RESET if _USE_COLOR else ""
+
+    return LOGO.format(
+        b=b,
+        ver=VERSION.ljust(26),
+    )
+
+
+SHORT_HELP = """  {c}Usage:{r}
+    gaiops health                    {dim}Cluster health{r}
+    gaiops worker list               {dim}List workers{r}
+    gaiops execute <action> [k=v..]  {dim}Execute a tool{r}
+    gaiops result <msg_id>           {dim}Poll result{r}
+    gaiops approve|reject <id>       {dim}Approve/Reject{r}
+    gaiops trace [list|get <id>]     {dim}Trace operations{r}
+    gaiops shell                     {dim}Interactive REPL mode{r}
+    gaiops config [init|show]        {dim}Configuration{r}
+    gaiops completion bash|zsh       {dim}Shell completions{r}
+
+  {c}Options:{r}
+    --base-url URL  --token TOKEN  --json  --help
+
+  {dim}See 'gaiops <command> --help' for details.{r}
+"""
+
+
 # ── ANSI Colors ──────────────────────────────────────────────────────────────
 
 if os.name == "nt":
     os.system("color")  # enable ANSI on Windows
+    if sys.version_info >= (3, 7):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
 
 _USE_COLOR = sys.stdout.isatty()
 
@@ -560,7 +611,7 @@ def _gen_bash_completion():
     local cur prev words cword
     _init_completion || return
 
-    local commands="health worker execute result approve reject trace config completion"
+    local commands="health worker execute result approve reject trace config status shell completion"
     local worker_sub="list"
     local trace_sub="list get"
     local config_sub="init show"
@@ -609,6 +660,8 @@ _gaiops_commands() {
         'reject:Reject high-risk operation'
         'trace:Trace operations (list, get)'
         'config:Configuration management (init, show)'
+        'status:Cluster status dashboard'
+        'shell:Interactive REPL mode'
         'completion:Generate shell completion'
     )
     _describe -t commands 'gaiops' commands
@@ -668,6 +721,195 @@ _gaiops "$@"
 # ── Parser ───────────────────────────────────────────────────────────────────
 
 
+class GaiopsShell(cmd.Cmd):
+    """Interactive gAIOps shell — type 'help' for commands, 'exit' to quit."""
+
+    intro = ""
+    prompt = _c("gaiops> ", C.CYAN) + " "
+
+    def __init__(self, base_url, token):
+        super().__init__()
+        self.base_url = base_url
+        self.token = token
+
+    # ---- builtins ----
+    def do_health(self, arg):
+        """Show cluster health dashboard"""
+        class FakeArgs:
+            base_url = self.base_url
+            token = self.token
+            json = False
+        cmd_health(FakeArgs())
+
+    def do_workers(self, arg):
+        """List connected workers (same as 'worker list')"""
+        class FakeArgs:
+            base_url = self.base_url
+            token = self.token
+            json = False
+        cmd_worker_list(FakeArgs())
+
+    def do_status(self, arg):
+        """Cluster status overview (health + workers + pending)"""
+        class FakeArgs:
+            base_url = self.base_url
+            token = self.token
+            json = False
+        cmd_status(FakeArgs())
+
+    def do_exec(self, arg):
+        """Execute a tool: exec <action> [key=val ...]"""
+        if not arg:
+            print(_err("Usage: exec <action> [key=val ...]"))
+            return
+        parts = arg.split()
+        action = parts[0]
+        params = parts[1:]
+        class FakeArgs:
+            base_url = self.base_url
+            token = self.token
+            json = False
+            action = action
+            params = params
+            target_worker = None
+            trace_id = None
+            priority = None
+            ttl = None
+            wait = False
+        cmd_execute(FakeArgs())
+
+    def do_result(self, arg):
+        """Get execution result: result <msg_id>"""
+        if not arg:
+            print(_err("Usage: result <msg_id>"))
+            return
+        class FakeArgs:
+            base_url = self.base_url
+            token = self.token
+            json = False
+            msg_id = arg.strip()
+            watch = False
+        cmd_result(FakeArgs())
+
+    def do_approve(self, arg):
+        """Approve a pending operation: approve <id>"""
+        if not arg:
+            print(_err("Usage: approve <id>"))
+            return
+        class FakeArgs:
+            base_url = self.base_url
+            token = self.token
+            json = False
+            approval_id = arg.strip()
+        cmd_approve(FakeArgs())
+
+    def do_reject(self, arg):
+        """Reject a pending operation: reject <id>"""
+        if not arg:
+            print(_err("Usage: reject <id>"))
+            return
+        class FakeArgs:
+            base_url = self.base_url
+            token = self.token
+            json = False
+            approval_id = arg.strip()
+        cmd_reject(FakeArgs())
+
+    def do_traces(self, arg):
+        """List recent traces"""
+        class FakeArgs:
+            base_url = self.base_url
+            token = self.token
+            json = False
+        cmd_trace_list(FakeArgs())
+
+    def do_trace(self, arg):
+        """Get trace details: trace <trace_id>"""
+        if not arg:
+            print(_err("Usage: trace <trace_id>"))
+            return
+        class FakeArgs:
+            base_url = self.base_url
+            token = self.token
+            json = False
+            trace_id = arg.strip()
+        cmd_trace_get(FakeArgs())
+
+    def do_config(self, arg):
+        """Show current configuration"""
+        cmd_config_show(arg)
+
+    def do_exit(self, arg):
+        """Exit the shell"""
+        print(_dim("Goodbye."))
+        return True
+
+    def do_quit(self, arg):
+        """Exit the shell"""
+        return self.do_exit(arg)
+
+    def emptyline(self):
+        pass
+
+    # ---- tab completion ----
+    def complete_exec(self, text, line, begidx, endidx):
+        actions = _fetch_actions(self.base_url, self.token)
+        return [a for a in actions if a.startswith(text)]
+
+    def completenamespace(self, text, *args):
+        """Catch-all for Ctrl-D / EOF."""
+        return []
+
+
+def cmd_shell(args):
+    """Enter interactive REPL mode."""
+    banner = _render_logo()
+    print(banner)
+    print(f"  {_dim('Interactive shell. Type help or exit.')}\n")
+    try:
+        GaiopsShell(args.base_url, args.token).cmdloop()
+    except AttributeError as e:
+        # Workaround Python 3.13 readline.backend issue on Windows.
+        if "readline" in str(e).lower():
+            _patch_readline()
+            GaiopsShell(args.base_url, args.token).cmdloop()
+        else:
+            raise
+
+
+def _patch_readline():
+    """Monkey-patch readline for Python 3.13 compatibility on Windows."""
+    import readline as rl
+    if not hasattr(rl, "backend"):
+        rl.backend = "windows" if os.name == "nt" else "generic"
+
+
+def cmd_status(args):
+    """Cluster status dashboard."""
+    h = request("GET", "/health", args.base_url, args.token)
+    w = request("GET", "/api/v1/workers", args.base_url, args.token)
+
+    if args.json:
+        print(json.dumps({"health": h, "workers": w}, indent=2, ensure_ascii=False, default=str))
+        return
+
+    h_sc = h.get("status_code", 0)
+    h_status = h.get("status", "?")
+    h_uptime = h.get("uptime", 0)
+    w_list = w.get("workers", [])
+    pending = h.get("orchestrator", {}).get("pending", 0)
+    approvals = h.get("security", {}).get("pendingApprovals", 0)
+    total_load = sum(x.get("current_load", 0) for x in w_list)
+    total_max = sum(x.get("max_concurrent", 1) for x in w_list) or 1
+
+    master_color = _ok if h_sc == 200 else _err
+    print(f"  {_bold('=== Cluster Status ===')}")
+    print(f"  {_bold('Master:')}   {master_color(h_status.upper())}  {_dim(f'(up {_fmt_uptime(h_uptime)})')}")
+    print(f"  {_bold('Workers:')}  {len(w_list)} online  {_dim(f'({total_load}/{total_max} load)')}")
+    print(f"  {_bold('Pending:')}  {pending}")
+    print(f"  {_bold('Approvals:')} {approvals}")
+
+
 def build_parser():
     cfg = load_config()
     default_base_url = cfg.get("defaults", "base_url", fallback=DEFAULT_BASE_URL)
@@ -684,7 +926,7 @@ def build_parser():
     parser.add_argument("--token", default=env_token, help="Cluster token (or CLUSTER_TOKEN env)")
     parser.add_argument("--json", action="store_true", help="Raw JSON output")
 
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command")
 
     # health
     p = sub.add_parser("health", help="Check Master health")
@@ -751,6 +993,14 @@ def build_parser():
     pcs = pc_sub.add_parser("show", help="Show current config")
     pcs.set_defaults(func=cmd_config_show)
 
+    # status
+    pst = sub.add_parser("status", help="Cluster status dashboard")
+    pst.set_defaults(func=cmd_status)
+
+    # shell
+    psh = sub.add_parser("shell", help="Enter interactive REPL mode")
+    psh.set_defaults(func=cmd_shell)
+
     # completion
     pcomp = sub.add_parser("completion", help="Generate shell completion script")
     pcomp.add_argument("shell", choices=["bash", "zsh"], help="Shell type")
@@ -765,6 +1015,14 @@ def main():
 
     if not args.token and "CLUSTER_TOKEN" in os.environ:
         args.token = os.environ["CLUSTER_TOKEN"]
+
+    if not args.command:
+        print(_render_logo())
+        if _USE_COLOR:
+            print(SHORT_HELP.format(c=C.CYAN, r=C.RESET, dim=C.DIM))
+        else:
+            print(SHORT_HELP.format(c="", r="", dim=""))
+        return
 
     args.func(args)
 
