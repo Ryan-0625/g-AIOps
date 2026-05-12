@@ -996,10 +996,29 @@ def _cmd_chat_loop(base_url, token, brain_url, history_store=None):
             continue
 
         # Display response.
-        print(f"{conclusion[:500]}")
-        if summaries:
-            for s in summaries[-3:]:  # Show last 3 steps max.
-                print(f"       {_dim(s[:120])}")
+        if result.get("fast_path"):
+            rstatus = result.get("status", "")
+            tool = result.get("tool", "")
+            data = result.get("data", {})
+            if rstatus == "rejected":
+                print(f"  {_warn(str(conclusion)[:300])}")
+            elif rstatus == "failed":
+                print(f"  {_err(str(conclusion)[:300])}")
+            elif tool:
+                print(f"  {_ok(str(conclusion)[:300])}")
+                if isinstance(data, dict) and data:
+                    for k, v in list(data.items())[:10]:
+                        print(f"    {_dim(k)}: {v}")
+                elif isinstance(data, list) and data:
+                    for item in data[:10]:
+                        print(f"    {item}")
+            else:
+                print(f"  {str(conclusion)[:500]}")
+        else:
+            print(f"{conclusion[:500]}")
+            if summaries:
+                for s in summaries[-3:]:  # Show last 3 steps max.
+                    print(f"       {_dim(s[:120])}")
 
         # Store history.
         ts = _fmt_timestamp()
