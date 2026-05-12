@@ -15,7 +15,7 @@ from agents.analyst import analyst_node
 from agents.planner import planner_node
 from agents.reflector import reflector_node
 from llm.adapter import LLMAdapter
-from llm.schemas import ALL_TOOLS
+from llm.schemas import ALL_TOOLS, _llm_name, _action_name
 from llm.context_window import compress_messages
 from tools.master_client import MasterClient
 from logger.structured_logger import get_logger
@@ -46,7 +46,8 @@ def _build_tool_descriptions() -> str:
             f"{k}: {v.get('type', 'any')}{'(required)' if k in fn.get('parameters', {}).get('required', []) else ''}"
             for k, v in params.items()
         )
-        lines.append(f"  - {fn['name']}({param_str}): {fn['description']}")
+        name_display = _action_name(fn['name'])
+        lines.append(f"  - {name_display}({param_str}): {fn['description']}")
     return "\n".join(lines)
 
 
@@ -67,6 +68,7 @@ class GraphEngine:
         self.read_only = read_only
         self.degraded = False
         self.active_sessions: dict[str, asyncio.Task] = {}
+        self.completed_sessions: dict[str, dict] = {}
         self._tool_descriptions = _build_tool_descriptions()
 
     @property
@@ -181,6 +183,18 @@ class GraphEngine:
             state.needs_human = True
             state.conclusion = f"Brain session failed: {e}"
         finally:
+            # Store result for chat API retrieval.
+            self.completed_sessions[state.trace_id] = {
+                "trace_id": state.trace_id,
+                "conclusion": state.conclusion,
+                "summaries": list(state.summaries),
+                "needs_human": state.needs_human,
+                "cycle_detected": state.cycle_detected,
+                "last_action": state.last_action,
+                "last_status": state.last_status,
+                "last_data": state.last_data,
+                "truncated": len(state.truncated_responses) > 0,
+            }
             self.active_sessions.pop(state.trace_id, None)
 
     async def _call_llm(self, state: GraphState, context: str) -> str | None:
@@ -267,7 +281,7 @@ class GraphEngine:
                         except json.JSONDecodeError:
                             raw_params = {}
                     return json.dumps({
-                        "action": fn.get("name", ""),
+                        "action": _action_name(fn.get("name", "")),
                         "params": raw_params,
                     })
                 # Plain text response.
@@ -284,6 +298,11 @@ class GraphEngine:
 
     async def get_session_status(self, trace_id: str) -> dict[str, Any]:
         """Check if a session is still running or completed."""
+        # Check completed first.
+        if trace_id in self.completed_sessions:
+            result = self.completed_sessions[trace_id]
+            return {"trace_id": trace_id, "status": "completed", **result}
+
         task = self.active_sessions.get(trace_id)
         if task is None:
             return {"trace_id": trace_id, "status": "not_found"}
@@ -293,3 +312,7 @@ class GraphEngine:
                 return {"trace_id": trace_id, "status": "failed", "error": str(exc)}
             return {"trace_id": trace_id, "status": "completed"}
         return {"trace_id": trace_id, "status": "running"}
+
+    def pop_session_result(self, trace_id: str) -> dict | None:
+        """Retrieve and remove a completed session result."""
+        return self.completed_sessions.pop(trace_id, None)

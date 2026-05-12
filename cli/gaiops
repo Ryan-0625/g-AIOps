@@ -37,6 +37,7 @@ from pathlib import Path
 VERSION = "0.2.0"
 CONFIG_PATH = Path.home() / ".gaiops" / "config"
 DEFAULT_BASE_URL = "http://localhost:8080"
+DEFAULT_BRAIN_URL = "http://localhost:9091"
 
 HARDCODED_ACTIONS = [
     "ping.icmp", "disk.usage", "dns.lookup", "http.get", "http.post",
@@ -71,12 +72,13 @@ SHORT_HELP = """  {c}Usage:{r}
     gaiops result <msg_id>           {dim}Poll result{r}
     gaiops approve|reject <id>       {dim}Approve/Reject{r}
     gaiops trace [list|get <id>]     {dim}Trace operations{r}
+    gaiops chat                      {dim}Natural language chat with Brain AI{r}
     gaiops shell                     {dim}Interactive REPL mode{r}
     gaiops config [init|show]        {dim}Configuration{r}
     gaiops completion bash|zsh       {dim}Shell completions{r}
 
   {c}Options:{r}
-    --base-url URL  --token TOKEN  --json  --help
+    --base-url URL  --brain-url URL  --token TOKEN  --json  --help
 
   {dim}See 'gaiops <command> --help' for details.{r}
 """
@@ -602,7 +604,7 @@ def _gen_bash_completion():
     local cur prev words cword
     _init_completion || return
 
-    local commands="health worker execute result approve reject trace config status shell completion"
+    local commands="health worker execute result approve reject trace config status shell chat completion"
     local worker_sub="list"
     local trace_sub="list get"
     local config_sub="init show"
@@ -653,6 +655,7 @@ _gaiops_commands() {
         'config:Configuration management (init, show)'
         'status:Cluster status dashboard'
         'shell:Interactive REPL mode'
+        'chat:Chat with Brain AI'
         'completion:Generate shell completion'
     )
     _describe -t commands 'gaiops' commands
@@ -718,35 +721,34 @@ class GaiopsShell(cmd.Cmd):
     intro = ""
     prompt = _c("gaiops> ", C.CYAN) + " "
 
-    def __init__(self, base_url, token):
+    def __init__(self, base_url, token, brain_url=None):
         super().__init__()
         self.base_url = base_url
         self.token = token
+        self.brain_url = brain_url or DEFAULT_BRAIN_URL
+        self.chat_history = []
+
+    # ---- helpers ----
+    def _fake(self, **kw):
+        class FakeArgs:
+            pass
+        obj = FakeArgs()
+        for k, v in kw.items():
+            setattr(obj, k, v)
+        return obj
 
     # ---- builtins ----
     def do_health(self, arg):
         """Show cluster health dashboard"""
-        class FakeArgs:
-            base_url = self.base_url
-            token = self.token
-            json = False
-        cmd_health(FakeArgs())
+        cmd_health(self._fake(base_url=self.base_url, token=self.token, json=False))
 
     def do_workers(self, arg):
         """List connected workers (same as 'worker list')"""
-        class FakeArgs:
-            base_url = self.base_url
-            token = self.token
-            json = False
-        cmd_worker_list(FakeArgs())
+        cmd_worker_list(self._fake(base_url=self.base_url, token=self.token, json=False))
 
     def do_status(self, arg):
         """Cluster status overview (health + workers + pending)"""
-        class FakeArgs:
-            base_url = self.base_url
-            token = self.token
-            json = False
-        cmd_status(FakeArgs())
+        cmd_status(self._fake(base_url=self.base_url, token=self.token, json=False))
 
     def do_exec(self, arg):
         """Execute a tool: exec <action> [key=val ...]"""
@@ -754,82 +756,131 @@ class GaiopsShell(cmd.Cmd):
             print(_err("Usage: exec <action> [key=val ...]"))
             return
         parts = arg.split()
-        action = parts[0]
-        params = parts[1:]
-        class FakeArgs:
-            base_url = self.base_url
-            token = self.token
-            json = False
-            action = action
-            params = params
-            target_worker = None
-            trace_id = None
-            priority = None
-            ttl = None
-            wait = False
-        cmd_execute(FakeArgs())
+        cmd_execute(self._fake(
+            base_url=self.base_url, token=self.token, json=False,
+            action=parts[0], params=parts[1:],
+            target_worker=None, trace_id=None, priority=None, ttl=None, wait=False,
+        ))
 
     def do_result(self, arg):
         """Get execution result: result <msg_id>"""
         if not arg:
             print(_err("Usage: result <msg_id>"))
             return
-        class FakeArgs:
-            base_url = self.base_url
-            token = self.token
-            json = False
-            msg_id = arg.strip()
-            watch = False
-        cmd_result(FakeArgs())
+        cmd_result(self._fake(
+            base_url=self.base_url, token=self.token, json=False,
+            msg_id=arg.strip(), watch=False,
+        ))
 
     def do_approve(self, arg):
         """Approve a pending operation: approve <id>"""
         if not arg:
             print(_err("Usage: approve <id>"))
             return
-        class FakeArgs:
-            base_url = self.base_url
-            token = self.token
-            json = False
-            approval_id = arg.strip()
-        cmd_approve(FakeArgs())
+        cmd_approve(self._fake(
+            base_url=self.base_url, token=self.token, json=False,
+            approval_id=arg.strip(),
+        ))
 
     def do_reject(self, arg):
         """Reject a pending operation: reject <id>"""
         if not arg:
             print(_err("Usage: reject <id>"))
             return
-        class FakeArgs:
-            base_url = self.base_url
-            token = self.token
-            json = False
-            approval_id = arg.strip()
-        cmd_reject(FakeArgs())
+        cmd_reject(self._fake(
+            base_url=self.base_url, token=self.token, json=False,
+            approval_id=arg.strip(),
+        ))
 
     def do_traces(self, arg):
         """List recent traces"""
-        class FakeArgs:
-            base_url = self.base_url
-            token = self.token
-            json = False
-        cmd_trace_list(FakeArgs())
+        cmd_trace_list(self._fake(base_url=self.base_url, token=self.token, json=False))
 
     def do_trace(self, arg):
         """Get trace details: trace <trace_id>"""
         if not arg:
             print(_err("Usage: trace <trace_id>"))
             return
-        class FakeArgs:
-            base_url = self.base_url
-            token = self.token
-            json = False
-            trace_id = arg.strip()
-        cmd_trace_get(FakeArgs())
+        cmd_trace_get(self._fake(
+            base_url=self.base_url, token=self.token, json=False,
+            trace_id=arg.strip(),
+        ))
 
     def do_config(self, arg):
         """Show current configuration"""
-        cmd_config_show(arg)
+        cmd_config_show(self._fake(base_url=self.base_url, token=self.token, json=False))
 
+    # ---- enhanced help ----
+    def do_help(self, arg):
+        """Show help for commands or a specific command"""
+        if arg:
+            # Show help for specific command.
+            super().do_help(arg)
+            return
+        # Categorized help overview.
+        c = C.CYAN if _USE_COLOR else ""
+        b = C.BOLD if _USE_COLOR else ""
+        r = C.RESET if _USE_COLOR else ""
+        d = C.DIM if _USE_COLOR else ""
+
+        cat = lambda t: f"\n  {b}{c}══ {t} ══{r}"
+        cmd = lambda n, h: f"    {c}{n:<15}{r} {d}{h}{r}"
+        sep = f"  {d}{'─'*50}{r}"
+
+        help_text = [
+            cat("Cluster & System"),
+            cmd("health", "Check cluster health"),
+            cmd("workers", "List connected workers"),
+            cmd("status", "Cluster status overview"),
+            cmd("traces", "List recent traces"),
+            cmd("trace", "Get trace details"),
+            sep,
+            cat("Tool Execution"),
+            cmd("exec", "Execute a tool action"),
+            cmd("result", "Get execution result"),
+            sep,
+            cat("Approval"),
+            cmd("approve", "Approve a pending operation"),
+            cmd("reject", "Reject a pending operation"),
+            sep,
+            cat("Chat & AI"),
+            cmd("chat", "Natural language chat with Brain AI"),
+            cmd("history", "Show chat history"),
+            sep,
+            cat("Config & Shell"),
+            cmd("config", "Show current configuration"),
+            cmd("exit", "Exit the shell"),
+            cmd("quit", "Exit the shell"),
+            sep,
+            f"\n  {d}Type '{c}help <command>{d}' for details.{r}",
+        ]
+        print("\n".join(help_text))
+
+    # ---- chat ----
+    def do_chat(self, arg):
+        """Enter natural language chat mode with Brain AI"""
+        _cmd_chat_loop(self.base_url, self.token, self.brain_url, self.chat_history)
+
+    def do_history(self, arg):
+        """Show chat history from current session"""
+        if not self.chat_history:
+            print(f"  {_dim('No chat history yet.')}")
+            return
+        print(f"\n  {_bold('Chat History')}")
+        print(f"  {_dim('─'*50)}")
+        for entry in self.chat_history:
+            role = entry["role"]
+            msg = entry["message"]
+            if role == "user":
+                print(f"  {_bold('You')}> {msg}")
+            else:
+                print(f"  {_info('Brain')}> {msg[:200]}")
+                if entry.get("summary"):
+                    print(f"       {_dim(entry['summary'][:120])}")
+        print(f"  {_dim('─'*50)}")
+        print(f"  {len(self.chat_history)} messages")
+
+    # ---- built-in overrides ----
     def do_exit(self, arg):
         """Exit the shell"""
         print(_dim("Goodbye."))
@@ -858,12 +909,12 @@ def cmd_shell(args):
     print(banner)
     print(f"  {_dim('Interactive shell. Type help or exit.')}\n")
     try:
-        GaiopsShell(args.base_url, args.token).cmdloop()
+        GaiopsShell(args.base_url, args.token, getattr(args, 'brain_url', DEFAULT_BRAIN_URL)).cmdloop()
     except AttributeError as e:
         # Workaround Python 3.13 readline.backend issue on Windows.
         if "readline" in str(e).lower():
             _patch_readline()
-            GaiopsShell(args.base_url, args.token).cmdloop()
+            GaiopsShell(args.base_url, args.token, getattr(args, 'brain_url', DEFAULT_BRAIN_URL)).cmdloop()
         else:
             raise
 
@@ -873,6 +924,129 @@ def _patch_readline():
     import readline as rl
     if not hasattr(rl, "backend"):
         rl.backend = "windows" if os.name == "nt" else "generic"
+
+
+def _cmd_chat_loop(base_url, token, brain_url, history_store=None):
+    """Internal chat loop — send messages to Brain, show responses."""
+    if history_store is None:
+        history_store = []
+
+    print(f"  {_info('Chat mode')} — Natural language with Brain AI")
+    print(f"  {_dim('Commands: /exit  /workers  /history  /clear')}\n")
+
+    while True:
+        try:
+            raw = input(f"  {_bold('You')}> ")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+
+        text = raw.strip()
+        if not text:
+            continue
+
+        # Slash commands.
+        if text.startswith("/"):
+            cmd = text.lower()
+            if cmd in ("/exit", "/quit", "/q"):
+                break
+            elif cmd == "/workers":
+                _cmd_chat_show_workers(base_url, token)
+                continue
+            elif cmd == "/history":
+                _cmd_chat_show_history(history_store)
+                continue
+            elif cmd == "/clear":
+                history_store.clear()
+                print(f"  {_dim('History cleared.')}")
+                continue
+            elif cmd == "/help":
+                print(f"  {_dim('/exit  /workers  /history  /clear')}")
+                continue
+
+        # Send to Brain API.
+        sys.stdout.write(f"  {_info('Brain')}> ")
+        sys.stdout.flush()
+
+        try:
+            result = request("POST", "/api/chat", brain_url, token, {
+                "message": text,
+            })
+        except Exception as e:
+            print(f"\n  {_err('[ERROR]')} Brain unreachable: {e}")
+            print(f"  {_dim('Ensure Brain is running and --brain-url is correct.')}")
+            continue
+
+        conclusion = result.get("conclusion", "No response.") if isinstance(result, dict) else "No response."
+        summaries = result.get("summaries", []) if isinstance(result, dict) else []
+        status = result.get("status", "") if isinstance(result, dict) else ""
+        error = result.get("error", "") if isinstance(result, dict) else ""
+
+        if result.get("status_code", 0) and result["status_code"] >= 400:
+            print(f"\n  {_err('[ERROR]')} {_error_summary(result)}")
+            print(f"  {_dim('Check: gaiops health, and ensure Brain is running.')}")
+            continue
+
+        if error:
+            print(f"\n  {_err(str(error)[:200])}")
+            continue
+
+        if status == "running":
+            print(f"\n  {_warn('Still processing...')} {_dim('(try again in a moment)')}")
+            continue
+
+        # Display response.
+        print(f"{conclusion[:500]}")
+        if summaries:
+            for s in summaries[-3:]:  # Show last 3 steps max.
+                print(f"       {_dim(s[:120])}")
+
+        # Store history.
+        ts = _fmt_timestamp()
+        history_store.append({"role": "user", "message": text, "time": ts})
+        history_store.append({"role": "brain", "message": conclusion, "summary": summaries, "time": ts})
+
+    print(f"  {_dim('Exited chat mode.')}")
+
+
+def _cmd_chat_show_workers(base_url, token):
+    """Show available workers (for /workers in chat mode)."""
+    result = request("GET", "/api/v1/workers", base_url, token)
+    workers = result.get("workers", [])
+    if not workers:
+        print(f"  {_warn('[WARN]')} No workers connected.")
+        return
+    print(f"  {_bold('Available Workers:')}")
+    for w in workers:
+        wid = w.get("worker_id", "?")
+        load = f"{w.get('current_load', 0)}/{w.get('max_concurrent', 1)}"
+        actions = ", ".join(w.get("actions", []))
+        print(f"    {_c(wid, C.CYAN)}  {_dim(f'[{load}]')}  {actions}")
+
+
+def _cmd_chat_show_history(history_store):
+    """Show chat history (for /history in chat mode)."""
+    if not history_store:
+        print(f"  {_dim('No chat history.')}")
+        return
+    print(f"\n  {_bold('Chat History')}")
+    print(f"  {_dim('─'*50)}")
+    for entry in history_store:
+        role = entry["role"]
+        msg = entry["message"]
+        if role == "user":
+            print(f"  {_bold('You')}> {msg[:150]}")
+        else:
+            print(f"  {_info('Brain')}> {msg[:200]}")
+    print(f"  {_dim('─'*50)}")
+    print(f"  {len(history_store)} messages")
+
+
+def cmd_chat(args):
+    """Natural language chat with Brain AI."""
+    banner = _render_logo()
+    print(banner)
+    _cmd_chat_loop(args.base_url, args.token, args.brain_url)
 
 
 def cmd_status(args):
@@ -914,6 +1088,7 @@ def build_parser():
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     parser.add_argument("--base-url", default=default_base_url, help="Master API URL")
+    parser.add_argument("--brain-url", default=os.environ.get("BRAIN_URL", DEFAULT_BRAIN_URL), help="Brain API URL (or BRAIN_URL env)")
     parser.add_argument("--token", default=env_token, help="Cluster token (or CLUSTER_TOKEN env)")
     parser.add_argument("--json", action="store_true", help="Raw JSON output")
 
@@ -991,6 +1166,10 @@ def build_parser():
     # shell
     psh = sub.add_parser("shell", help="Enter interactive REPL mode")
     psh.set_defaults(func=cmd_shell)
+
+    # chat
+    pchat = sub.add_parser("chat", help="Natural language chat with Brain AI")
+    pchat.set_defaults(func=cmd_chat)
 
     # completion
     pcomp = sub.add_parser("completion", help="Generate shell completion script")

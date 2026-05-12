@@ -90,7 +90,46 @@ async def main() -> None:
             "degraded": engine.is_degraded if engine else False,
         })
 
+    async def chat_handler(request: web.Request) -> web.Response:
+        """Accept a natural language message and return the Brain's response."""
+        global engine
+        if not engine:
+            return web.json_response({"error": "Brain not initialized"}, status=503)
+
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON"}, status=400)
+
+        message = (body.get("message") or "").strip()
+        if not message:
+            return web.json_response({"error": "message is required"}, status=400)
+
+        logger.info("Chat request", extra={"data": {"message": message[:100]}})
+
+        trace_id = await engine.start_session(message)
+
+        # Wait for completion with timeout.
+        task = engine.active_sessions.get(trace_id)
+        if task:
+            try:
+                await asyncio.wait_for(task, timeout=180.0)
+            except asyncio.TimeoutError:
+                return web.json_response({
+                    "trace_id": trace_id,
+                    "status": "running",
+                    "conclusion": "Still processing — check later.",
+                })
+
+        result = engine.pop_session_result(trace_id) or {
+            "trace_id": trace_id,
+            "status": "not_found",
+            "conclusion": "Session not found.",
+        }
+        return web.json_response(result)
+
     health_app.router.add_get("/health", health_handler)
+    health_app.router.add_post("/api/chat", chat_handler)
     health_runner = web.AppRunner(health_app)
     await health_runner.setup()
     health_site = web.TCPSite(health_runner, "0.0.0.0", 9091)

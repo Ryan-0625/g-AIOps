@@ -53,14 +53,20 @@ services:
     build:
       context: ./brain
       dockerfile: Dockerfile
+    ports:
+      - "9091:9091"
     depends_on:
       master:
         condition: service_healthy
     volumes:
       - ./config/brain.yaml:/app/brain.yaml:ro
     environment:
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-sk-4b40481af04f4d01b0a7a0f9590aec0c}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.deepseek.com/v1}
+      - OPENAI_MODEL=${OPENAI_MODEL:-deepseek-v4-flash}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5-7b}
       - CLUSTER_TOKEN=dev-token-change
       - MASTER_API_URL=http://master:8080
     healthcheck:

@@ -2,27 +2,47 @@
 
 from typing import Any
 
+# DeepSeek/OpenAI require function names to match ^[a-zA-Z0-9_-]+$.
+# gAIOps uses dotted action names (ping.icmp). Map between them.
+def _llm_name(action: str) -> str:
+    """Convert action name to LLM-safe name (dots → underscores)."""
+    return action.replace(".", "_")
+
+
+def _action_name(llm_name: str) -> str:
+    """Convert LLM-safe name back to action name (underscores → dots)."""
+    return llm_name.replace("_", ".")
+
 
 def tool_to_ollama_schema(tool_name: str, description: str, params: dict[str, Any]) -> dict[str, Any]:
-    """Convert a tool definition to Ollama function calling format."""
+    """Convert a tool definition to Ollama/OpenAI function calling format.
+
+    The function.name is sanitized for LLM API requirements (no dots).
+    The original dotted name is stored in function.description metadata.
+    """
     # Append optional target_worker_id to every tool schema.
     worker_param: dict[str, Any] = {
         "target_worker_id": {
             "type": "string",
             "description": "Target worker ID (e.g. worker-1). If not specified, Master routes to least-loaded worker.",
-            "required": False,
         },
     }
     all_params = {**worker_param, **params}
+    # Extract required params BEFORE cleaning individual property entries.
+    # DeepSeek API rejects inline "required" inside property definitions.
+    required_params = []
+    for k, v in all_params.items():
+        if isinstance(v, dict) and v.pop("required", None):
+            required_params.append(k)
     return {
         "type": "function",
         "function": {
-            "name": tool_name,
-            "description": description,
+            "name": _llm_name(tool_name),
+            "description": f"[action:{tool_name}] {description}",
             "parameters": {
                 "type": "object",
                 "properties": all_params,
-                "required": [k for k, v in all_params.items() if v.get("required")],
+                "required": required_params,
             },
         },
     }
