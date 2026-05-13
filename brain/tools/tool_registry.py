@@ -106,6 +106,43 @@ REGISTRY: dict[str, dict[str, Any]] = {
             "state": {"type": "string", "description": "State filter: established, listening, all"},
         },
     },
+    "cpu.usage": {
+        "description": "Get CPU usage, load average, and core count",
+        "required_params": [],
+        "risk_level": "readonly",
+        "params": {},
+    },
+    "memory.usage": {
+        "description": "Get detailed memory usage including swap, buffers, and cached",
+        "required_params": [],
+        "risk_level": "readonly",
+        "params": {},
+    },
+    "service.start": {
+        "description": "Start a systemd service",
+        "required_params": ["name"],
+        "risk_level": "high",
+        "params": {
+            "name": {"type": "string", "description": "Service name"},
+        },
+    },
+    "file.list": {
+        "description": "List files and directories in a path",
+        "required_params": [],
+        "risk_level": "readonly",
+        "params": {
+            "path": {"type": "string", "description": "Directory path (default /)"},
+        },
+    },
+    "container.logs": {
+        "description": "Fetch logs from a Docker container",
+        "required_params": ["container_id"],
+        "risk_level": "readonly",
+        "params": {
+            "container_id": {"type": "string", "description": "Container ID or name"},
+            "tail": {"type": "integer", "description": "Number of recent log lines (1-500, default 50)"},
+        },
+    },
     "container.list": {
         "description": "List Docker containers via Docker socket",
         "required_params": [],

@@ -1,7 +1,8 @@
 # Master dev image — includes devDependencies for ts-node-dev hot-reload
 FROM node:20-alpine
 
-RUN apk add --no-cache tzdata wget
+RUN apk add --no-cache tzdata wget && \
+    addgroup -S gaiops && adduser -S gaiops -G gaiops
 
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -9,6 +10,7 @@ RUN npm ci
 
 COPY tsconfig.json ./
 COPY src/ ./src/
+USER gaiops
 
 EXPOSE 8080
 

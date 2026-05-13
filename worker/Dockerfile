@@ -11,9 +11,12 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /gaiops-worker ./cmd/worker/
 # ── Runtime stage ────────────────────────────────────────────────────────
 FROM alpine:3.21
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata && \
+    addgroup -S gaiops && adduser -S gaiops -G gaiops
 
 COPY --from=builder /gaiops-worker /usr/local/bin/gaiops-worker
+
+USER gaiops
 
 EXPOSE 9090
 

@@ -14,6 +14,7 @@ import (
 
 	"github.com/gaiops/worker/internal/executor"
 	"github.com/gaiops/worker/internal/registry"
+	"github.com/gaiops/worker/internal/safety"
 )
 
 // DynamicManager manages dynamically created tools at runtime.
@@ -200,7 +201,20 @@ func buildDynamicToolFn(name, scriptPath, interpreter string, timeout time.Durat
 		defer cancel()
 
 		cmd := exec.CommandContext(execCtx, interpreter, scriptPath)
-		cmd.Env = append(os.Environ(),
+
+		// Filter out sensitive env vars before passing to external script.
+		var cleanEnv []string
+		for _, env := range os.Environ() {
+			eq := strings.IndexByte(env, '=')
+			if eq == -1 {
+				continue
+			}
+			key := env[:eq]
+			if !safety.IsSecretEnvVar(key) {
+				cleanEnv = append(cleanEnv, env)
+			}
+		}
+		cmd.Env = append(cleanEnv,
 			fmt.Sprintf("TOOL_PARAMS=%s", string(paramsJSON)),
 			fmt.Sprintf("TOOL_NAME=%s", name),
 		)

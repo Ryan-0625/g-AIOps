@@ -199,6 +199,76 @@ function findConfigPath(): string {
   return "";
 }
 
+// ── Validation ───────────────────────────────────────────────────────────
+
+export interface ConfigWarning {
+  field: string;
+  message: string;
+}
+
+export interface ConfigError {
+  field: string;
+  message: string;
+}
+
+/**
+ * validate checks the loaded config for production-readiness.
+ * Returns lists of warnings (non-fatal) and errors (fatal).
+ */
+export function validate(cfg: MasterConfig): { warnings: ConfigWarning[]; errors: ConfigError[] } {
+  const warnings: ConfigWarning[] = [];
+  const errors: ConfigError[] = [];
+
+  // Cluster token must not be the dev default.
+  if (cfg.cluster_token === "dev-token-change-in-production") {
+    warnings.push({ field: "cluster_token", message: "Using dev default — set CLUSTER_TOKEN env var for production" });
+  }
+  if (cfg.cluster_token.length < 8) {
+    warnings.push({ field: "cluster_token", message: `Length ${cfg.cluster_token.length} is short (recommend >= 16 chars)` });
+  }
+
+  // Numeric bounds.
+  if (cfg.server.ws.max_connections <= 0) {
+    errors.push({ field: "server.ws.max_connections", message: `Must be > 0, got ${cfg.server.ws.max_connections}` });
+  }
+  if (cfg.server.ws.connection_rate_limit <= 0) {
+    errors.push({ field: "server.ws.connection_rate_limit", message: `Must be > 0, got ${cfg.server.ws.connection_rate_limit}` });
+  }
+  if (cfg.server.api.rate_limit <= 0) {
+    errors.push({ field: "server.api.rate_limit", message: `Must be > 0, got ${cfg.server.api.rate_limit}` });
+  }
+  if (cfg.worker.heartbeat_miss_tolerance <= 0) {
+    errors.push({ field: "worker.heartbeat_miss_tolerance", message: `Must be > 0, got ${cfg.worker.heartbeat_miss_tolerance}` });
+  }
+  if (cfg.orchestrator.max_pending <= 0) {
+    errors.push({ field: "orchestrator.max_pending", message: `Must be > 0, got ${cfg.orchestrator.max_pending}` });
+  }
+  if (cfg.orchestrator.pending_ttl <= 0) {
+    errors.push({ field: "orchestrator.pending_ttl", message: `Must be > 0, got ${cfg.orchestrator.pending_ttl}` });
+  }
+  if (cfg.security.approval_timeout <= 0) {
+    errors.push({ field: "security.approval_timeout", message: `Must be > 0, got ${cfg.security.approval_timeout}` });
+  }
+  if (cfg.server.api.body_limit) {
+    const match = cfg.server.api.body_limit.match(/^(\d+)(mb|kb|gb)$/i);
+    if (!match) {
+      errors.push({ field: "server.api.body_limit", message: `Invalid format: ${cfg.server.api.body_limit} (expected e.g. 5mb)` });
+    }
+  }
+
+  // TLS cert file existence.
+  const tlsCert = process.env.TLS_CERT_PATH;
+  const tlsKey = process.env.TLS_KEY_PATH;
+  if (tlsCert && !fs.existsSync(tlsCert)) {
+    errors.push({ field: "TLS_CERT_PATH", message: `File not found: ${tlsCert}` });
+  }
+  if (tlsKey && !fs.existsSync(tlsKey)) {
+    errors.push({ field: "TLS_KEY_PATH", message: `File not found: ${tlsKey}` });
+  }
+
+  return { warnings, errors };
+}
+
 /** Reset cache (for tests). */
 export function reset(): void {
   cached = null;

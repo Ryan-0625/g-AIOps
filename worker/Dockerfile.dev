@@ -1,13 +1,15 @@
 # Worker dev image — full Go toolchain for go run hot-reload
 FROM golang:1.25-alpine
 
-RUN apk add --no-cache ca-certificates tzdata git
+RUN apk add --no-cache ca-certificates tzdata git && \
+    addgroup -S gaiops && adduser -S gaiops -G gaiops
 
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+USER gaiops
 
 EXPOSE 9090
 

@@ -78,6 +78,56 @@ class MasterClient:
             self._session = aiohttp.ClientSession(connector=connector)
         return self._session
 
+    async def _poll_result(
+        self,
+        msg_id: str,
+        trace_id: str,
+        timeout: float = 30.0,
+        poll_interval: float = 0.5,
+    ) -> dict[str, Any]:
+        """Poll Master for the actual result of an async execution."""
+        session = await self._ensure_session()
+        headers = {"Authorization": f"Bearer {self.cluster_token}"}
+        deadline = time.monotonic() + timeout
+        last_exc: str | None = None
+        while time.monotonic() < deadline:
+            try:
+                async with session.get(
+                    f"{self.api_url}/api/v1/result/{msg_id}",
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=min(5.0, deadline - time.monotonic())),
+                ) as resp:
+                    if resp.status == 200:
+                        envelope = await resp.json()
+                        # Envelope wraps result in payload — unwrap it.
+                        payload = envelope.get("payload", {})
+                        return {
+                            "trace_id": trace_id,
+                            "msg_id": envelope.get("msg_id", msg_id),
+                            "status": payload.get("status", "failure"),
+                            "action": payload.get("action", ""),
+                            "data": payload.get("data", {}),
+                            "error": payload.get("error"),
+                        }
+                    elif resp.status == 404:
+                        await asyncio.sleep(poll_interval)
+                        continue
+                    else:
+                        last_exc = f"unexpected status {resp.status}"
+                        break
+            except asyncio.TimeoutError:
+                last_exc = "poll timeout"
+                continue
+            except aiohttp.ClientError as e:
+                last_exc = str(e)
+                await asyncio.sleep(poll_interval)
+                continue
+        return {
+            "trace_id": trace_id,
+            "status": "failure",
+            "error": {"code": "RESULT_POLL_TIMEOUT", "message": last_exc or "result not available within timeout"},
+        }
+
     async def execute(
         self,
         action: str,
@@ -160,6 +210,13 @@ class MasterClient:
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
             ) as resp:
                 result = await resp.json()
+                # If Master returns pending, poll for the actual result.
+                if result.get("status") == "pending" and result.get("msg_id"):
+                    result = await self._poll_result(
+                        msg_id=result["msg_id"],
+                        trace_id=trace_id,
+                        timeout=self.timeout,
+                    )
                 return result
         except asyncio.TimeoutError:
             return {

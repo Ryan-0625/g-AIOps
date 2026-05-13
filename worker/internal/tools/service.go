@@ -33,6 +33,13 @@ func init() {
 		RiskLevel:    "high",
 		Execute:      executeServiceStop,
 	})
+	registry.Global.Register(registry.Tool{
+		Action:       "service.start",
+		Timeout:      30 * time.Second,
+		IsIdempotent: false,
+		RiskLevel:    "high",
+		Execute:      executeServiceStart,
+	})
 }
 
 func executeServiceStatus(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
@@ -94,5 +101,24 @@ func executeServiceStop(ctx context.Context, params map[string]interface{}) (map
 		"name":    name,
 		"status":  "inactive",
 		"running": false,
+	}, nil
+}
+
+func executeServiceStart(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	name, _ := params["name"].(string)
+	if name == "" {
+		return nil, executor.NewErr("INVALID_PARAMS", "service name is required")
+	}
+
+	cmd := exec.CommandContext(ctx, "systemctl", "start", name)
+	if err := cmd.Run(); err != nil {
+		return nil, executor.NewErr("SERVICE_NOT_FOUND",
+			fmt.Sprintf("failed to start service %q: %v", name, err))
+	}
+
+	return map[string]interface{}{
+		"name":    name,
+		"status":  "active",
+		"running": true,
 	}, nil
 }

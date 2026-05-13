@@ -8,11 +8,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 # ── Runtime stage ────────────────────────────────────────────────────────
 FROM python:3.12-alpine
 
-RUN apk add --no-cache tzdata ca-certificates
+RUN apk add --no-cache tzdata ca-certificates && \
+    addgroup -S gaiops && adduser -S gaiops -G gaiops
 
 WORKDIR /app
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY . .
+
+USER gaiops
 
 EXPOSE 9091
 

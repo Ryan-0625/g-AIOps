@@ -54,16 +54,29 @@ class IntentClassifier:
     IRRELEVANT = [
         re.compile(p) for p in [
             r"^(hi|hello|hey|good\s*(morning|afternoon|evening)|yo)\b",
+            r"^(你好|您好|嗨|嘿|哈喽|大家好)",
+            r"^(早上好|下午好|晚上好|晚安)",
             r"^(thanks|thank\s*you|thx|ty)\b",
+            r"^(谢谢|感谢|多谢|辛苦了)",
             r"^(bye|goodbye|see\s*you|later|cya)\b",
+            r"^(再见|拜拜|明天见|回头见)",
             r"(how are you|how's it going|what'?s up|sup)",
-            r"(what is your name|who are you|tell me about yourself)",
+            r"(你好吗|怎么样|最近怎样|在吗)",
+            r"(what is your name|who are you|tell me about yourself|introduce yourself)",
+            r"(你是谁|你叫什么|介绍你自己|自我介绍一下|怎么称呼你)",
             r"(tell me a joke|tell us a joke|make me laugh)",
             r"(joke|funny|lol|lmao|rofl|haha|laugh)",
             r"(write a poem|write a story|compose|create a story)",
             r"(weather|stock price|news about|what'?s happening)",
             r"(opinion on|thoughts? about|feel about)",
             r"^(what do you think about)",
+            # Chinese irrelevant — general knowledge, news, opinions
+            r"(什么是|什么是|怎么样才)",
+            r"(你觉得|你认为|你怎么看|如何看待)",
+            r"(中美|中国|美国|政治|经济|历史|文化)",
+            r"(股票|天气|新闻|体育|娱乐|电影|音乐)",
+            r"(写[一篇首]|创作|编[一个])",
+            r"(讲个笑话|说个笑话|来个笑话)",
         ]
     ]
 
@@ -164,6 +177,28 @@ class IntentClassifier:
         ]
     ]
 
+    # ── Language detection ──────────────────────────────────────────
+
+    _ZH_PAT = re.compile(r'[一-鿿　-〿＀-￯]')
+
+    @staticmethod
+    def _detect_lang(text: str) -> str:
+        """Detect 'zh' or 'en' based on presence of CJK characters."""
+        return "zh" if IntentClassifier._ZH_PAT.search(text) else "en"
+
+    # ── Greeting responses ───────────────────────────────────────────
+
+    _GREETING_EN = (
+        "Hello! I am gAIOps Brain, your AI operations assistant. "
+        "I can help you check cluster health, run diagnostic tools, "
+        "execute system commands, and more. How can I assist you today?"
+    )
+    _GREETING_ZH = (
+        "你好！我是 gAIOps Brain，你的 AI 运维助手。"
+        "我可以帮你检查集群状态、执行诊断工具、"
+        "运行系统命令等。请问有什么可以帮你的？"
+    )
+
     # ── Public API ──────────────────────────────────────────────────
 
     def classify(self, text: str) -> IntentResult:
@@ -181,9 +216,11 @@ class IntentClassifier:
         # 1. Check irrelevant (fast reject)
         for pat in self.IRRELEVANT:
             if pat.search(stripped):
+                lang = self._detect_lang(stripped)
+                greeting = self._GREETING_ZH if lang == "zh" else self._GREETING_EN
                 return IntentResult(
                     category=IntentCategory.IRRELEVANT,
-                    reason="I am an AI operations assistant and can only help with system operations.",
+                    reason=greeting,
                 )
 
         # 2. Check health

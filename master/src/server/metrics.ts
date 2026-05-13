@@ -42,7 +42,7 @@ export function metricsRouter(
     lines.push(`gaiops_approvals_pending ${snap.approvalCount}`);
 
     lines.push("# HELP gaiops_uptime_seconds Process uptime");
-    lines.push("# TYPE gaiops_uptime_seconds counter");
+    lines.push("# TYPE gaiops_uptime_seconds gauge");
     lines.push(`gaiops_uptime_seconds ${snap.uptimeSeconds}`);
 
     // Counters

@@ -1,7 +1,16 @@
-"""Brain configuration — loaded from environment variables with defaults."""
+"""Brain configuration — loaded from environment variables with defaults.
 
+Three-layer merge priority (highest wins):
+  1. Environment variables
+  2. YAML config file (/app/brain.yaml or BRAIN_CONFIG_PATH)
+  3. Code defaults (dataclass field defaults)
+"""
+
+import logging
 import os
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -26,11 +35,18 @@ class BrainConfig:
     # Degradation / Read-Only
     read_only: bool = False
 
+    # API
+    api_rate_limit: int = 30  # max requests per minute per client IP
+
     # Logging
     log_level: str = "info"
 
     @classmethod
     def from_env(cls) -> "BrainConfig":
+        """Load config from environment variables only (legacy).
+
+        Kept for backward compatibility. Prefer load() which also reads YAML.
+        """
         return cls(
             llm_provider=os.getenv("LLM_PROVIDER", "ollama"),
             llm_model=os.getenv("OLLAMA_MODEL", "qwen2.5:7b"),
@@ -45,4 +61,119 @@ class BrainConfig:
             max_total_retries=int(os.getenv("MAX_TOTAL_RETRIES", "5")),
             read_only=os.getenv("READ_ONLY", "false").lower() == "true",
             log_level=os.getenv("LOG_LEVEL", "info"),
+            api_rate_limit=int(os.getenv("API_RATE_LIMIT", "30")),
         )
+
+    @classmethod
+    def load(cls, config_path: str | None = None) -> "BrainConfig":
+        """Three-layer merge: code defaults ← YAML ← environment variables.
+
+        Args:
+            config_path: Path to YAML config file. Falls back to BRAIN_CONFIG_PATH env var.
+
+        Returns:
+            Validated BrainConfig instance.
+
+        Exits process with code 1 on fatal validation errors.
+        """
+        cfg = cls()
+
+        # Layer 1: YAML file (lowest priority among overrides)
+        path = config_path or os.environ.get("BRAIN_CONFIG_PATH")
+        if path:
+            try:
+                with open(path) as f:
+                    import yaml as _yaml
+                    data = _yaml.safe_load(f)
+                if isinstance(data, dict):
+                    for key, val in data.items():
+                        if hasattr(cfg, key) and val is not None:
+                            setattr(cfg, key, val)
+            except FileNotFoundError:
+                pass  # YAML is optional
+            except Exception as e:
+                logger.warning("Failed to load config YAML %s: %s", path, e)
+
+        # Layer 2: Environment variables (highest priority — only if set)
+        env_overrides = cls._read_env_overrides()
+        for field_name, value in env_overrides.items():
+            setattr(cfg, field_name, value)
+
+        # Validate before returning.
+        cfg.validate()
+        return cfg
+
+    @classmethod
+    def _read_env_overrides(cls) -> dict:
+        """Read only env vars that are explicitly set. Returns field→value dict."""
+        overrides: dict = {}
+
+        # String fields
+        _str_map = [
+            ("LLM_PROVIDER", "llm_provider"),
+            ("OLLAMA_MODEL", "llm_model"),
+            ("OLLAMA_URL", "llm_base_url"),
+            ("MASTER_API_URL", "master_api_url"),
+            ("CLUSTER_TOKEN", "cluster_token"),
+            ("LOG_LEVEL", "log_level"),
+        ]
+        for env_key, field_name in _str_map:
+            val = os.environ.get(env_key)
+            if val is not None:
+                overrides[field_name] = val
+
+        # Numeric fields — validate the cast
+        _num_map = [
+            ("LLM_TIMEOUT", "llm_timeout", float),
+            ("LLM_MAX_RETRIES", "llm_max_retries", int),
+            ("MASTER_REQUEST_TIMEOUT", "master_request_timeout", float),
+            ("MAX_RETRY_SAME", "max_retry_same", int),
+            ("MAX_TOTAL_RETRIES", "max_total_retries", int),
+            ("API_RATE_LIMIT", "api_rate_limit", int),
+        ]
+        for env_key, field_name, cast in _num_map:
+            val = os.environ.get(env_key)
+            if val is not None:
+                try:
+                    overrides[field_name] = cast(val.strip())
+                except (ValueError, TypeError):
+                    logger.warning("Invalid %s=%r, using default", env_key, val)
+
+        # Boolean fields
+        for env_key, field_name in [("TLS_VERIFY", "tls_verify"), ("READ_ONLY", "read_only")]:
+            val = os.environ.get(env_key)
+            if val is not None:
+                overrides[field_name] = val.strip().lower() == "true"
+
+        return overrides
+
+    def validate(self) -> None:
+        """Validate config. Logs warnings and raises ValueError on fatal issues."""
+        fatal = False
+
+        # Provider must be recognised.
+        if self.llm_provider not in ("ollama", "openai"):
+            logger.error("llm_provider=%r not supported (use ollama or openai)", self.llm_provider)
+            fatal = True
+
+        # Numeric bounds.
+        if self.llm_timeout <= 0:
+            logger.error("llm_timeout must be > 0, got %s", self.llm_timeout)
+            fatal = True
+        if self.master_request_timeout <= 0:
+            logger.error("master_request_timeout must be > 0, got %s", self.master_request_timeout)
+            fatal = True
+        if self.api_rate_limit <= 0:
+            logger.error("api_rate_limit must be > 0, got %s", self.api_rate_limit)
+            fatal = True
+        if self.llm_max_retries < 0:
+            logger.error("llm_max_retries must be >= 0, got %s", self.llm_max_retries)
+            fatal = True
+
+        # Warn on default dev token.
+        if self.cluster_token == "dev-token":
+            logger.warning("cluster_token is the dev default — set CLUSTER_TOKEN env var for production")
+
+        if fatal:
+            import sys
+            sys.exit(1)

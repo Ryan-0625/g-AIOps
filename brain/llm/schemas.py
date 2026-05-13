@@ -179,8 +179,47 @@ TOOL_DELETE = tool_to_ollama_schema(
     },
 )
 
+CPU_USAGE = tool_to_ollama_schema(
+    "cpu.usage",
+    "Get CPU usage, load average, and core count.",
+    {},
+)
+
+MEMORY_USAGE = tool_to_ollama_schema(
+    "memory.usage",
+    "Get detailed memory usage including swap, buffers, and cached.",
+    {},
+)
+
+SERVICE_START = tool_to_ollama_schema(
+    "service.start",
+    "Start a systemd service.",
+    {
+        "name": {"type": "string", "description": "Service name", "required": True},
+    },
+)
+
+FILE_LIST = tool_to_ollama_schema(
+    "file.list",
+    "List files and directories in a path.",
+    {
+        "path": {"type": "string", "description": "Directory path (default /)"},
+    },
+)
+
+CONTAINER_LOGS = tool_to_ollama_schema(
+    "container.logs",
+    "Fetch logs from a Docker container.",
+    {
+        "container_id": {"type": "string", "description": "Container ID or name", "required": True},
+        "tail": {"type": "integer", "description": "Number of recent log lines (1-500, default 50)"},
+    },
+)
+
 ALL_TOOLS = [PING_ICMP, DISK_USAGE, SERVICE_STATUS, SERVICE_RESTART,
              HTTP_GET, HTTP_POST, DNS_LOOKUP, SYSTEM_INFO,
              FILE_READ, FILE_WRITE, NETWORK_CONNECTIONS, CONTAINER_LIST,
-             TOOL_CREATE, TOOL_DELETE]
+             TOOL_CREATE, TOOL_DELETE,
+             CPU_USAGE, MEMORY_USAGE, SERVICE_START,
+             FILE_LIST, CONTAINER_LOGS]
 TOOL_NAMES = [t["function"]["name"] for t in ALL_TOOLS]

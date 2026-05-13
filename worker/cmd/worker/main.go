@@ -60,11 +60,13 @@ func main() {
 		MaxConcurrent:     cfg.MaxConcurrentTools,
 		WorkerVersion:     "0.1.0",
 		TLSSkipVerify:     cfg.TLSSkipVerify,
+		MaxAttempts:        cfg.Reconnect.MaxAttempts,
 	}, exec, log)
 
 	// Reporter sends periodic heartbeat envelopes to Master.
 	rep := reporter.New(cfg.HeartbeatInterval, len(registry.Global.Actions()), client.SendEnvelope, log)
 	client.SetReporter(rep)
+	server.SetMetricsReporter(rep)
 
 	// Dynamic tool manager — enables runtime tool.create and tool.delete.
 	dm := tools.NewDynamicManager(cfg.DataDir, func() {
@@ -94,6 +96,7 @@ func main() {
 	// HTTP health endpoint.
 	healthMux := http.NewServeMux()
 	healthMux.HandleFunc("/health", server.HealthHandler)
+	healthMux.HandleFunc("/metrics", server.MetricsHandler)
 	healthServer := &http.Server{Addr: ":9090", Handler: healthMux}
 	go func() {
 		log.Info("Health endpoint listening", logger.WithData(map[string]interface{}{"addr": ":9090"}))

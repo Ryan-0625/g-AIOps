@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gaiops/worker/internal/executor"
@@ -20,6 +21,13 @@ func init() {
 		IsIdempotent: true,
 		RiskLevel:    "readonly",
 		Execute:      executeContainerList,
+	})
+	registry.Global.Register(registry.Tool{
+		Action:       "container.logs",
+		Timeout:      15 * time.Second,
+		IsIdempotent: true,
+		RiskLevel:    "readonly",
+		Execute:      executeContainerLogs,
 	})
 }
 
@@ -87,6 +95,87 @@ func executeContainerList(ctx context.Context, params map[string]interface{}) (m
 		"containers": results,
 		"count":      len(results),
 	}, nil
+}
+
+func executeContainerLogs(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	containerID, _ := params["container_id"].(string)
+	if containerID == "" {
+		return nil, executor.NewErr("INVALID_PARAMS", "container_id is required")
+	}
+
+	tail, _ := params["tail"].(int)
+	if tail <= 0 || tail > 500 {
+		tail = 50
+	}
+
+	logs, err := queryDockerLogs(ctx, containerID, tail)
+	if err != nil {
+		return nil, executor.NewErr("DOCKER_FAILED", fmt.Sprintf("cannot get container logs: %v", err))
+	}
+
+	return map[string]interface{}{
+		"container_id": containerID,
+		"logs":         logs,
+		"line_count":   len(logs),
+	}, nil
+}
+
+func queryDockerLogs(ctx context.Context, containerID string, tail int) ([]string, error) {
+	socketPath := "/var/run/docker.sock"
+
+	client := http.Client{
+		Transport: &http.Transport{
+			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+				return net.Dial("unix", socketPath)
+			},
+		},
+		Timeout: 15 * time.Second,
+	}
+
+	urlPath := fmt.Sprintf("/containers/%s/logs?stdout=true&stderr=true&tail=%d", containerID, tail)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix"+urlPath, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("docker API call failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("docker API returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 65536))
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	// Docker log stream uses 8-byte header per line, strip them.
+	lines := []string{}
+	for i := 0; i < len(body); {
+		if i+8 >= len(body) {
+			break
+		}
+		// Skip 8-byte Docker stream header.
+		size := int(body[i+7]) | int(body[i+6])<<8 | int(body[i+5])<<16 | int(body[i+4])<<24
+		i += 8
+		if i+size > len(body) {
+			size = len(body) - i
+		}
+		lines = append(lines, strings.TrimRight(string(body[i:i+size]), "\n\r"))
+		i += size
+	}
+
+	// Fallback if header parsing yielded nothing.
+	if len(lines) == 0 && len(body) > 0 {
+		lines = strings.Split(strings.TrimRight(string(body), "\n"), "\n")
+	}
+
+	return lines, nil
 }
 
 func queryDockerAPI(ctx context.Context, all bool) ([]dockerContainer, error) {

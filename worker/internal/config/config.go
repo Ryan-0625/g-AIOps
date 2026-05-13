@@ -17,8 +17,9 @@ import (
 // --- Reconnect ---
 
 type ReconnectConfig struct {
-	BaseDelay int `yaml:"base_delay"` // seconds
-	MaxDelay  int `yaml:"max_delay"`  // seconds
+	BaseDelay   int `yaml:"base_delay"`   // seconds
+	MaxDelay    int `yaml:"max_delay"`    // seconds
+	MaxAttempts int `yaml:"max_attempts"` // 0 = unlimited (default)
 }
 
 // --- ExecConfig ---
@@ -149,6 +150,9 @@ func validate(cfg *Config) []error {
 	}
 	if cfg.Reconnect.MaxDelay <= 0 {
 		add("reconnect.max_delay must be > 0")
+	}
+	if cfg.Reconnect.MaxAttempts < 0 {
+		add("reconnect.max_attempts must be >= 0")
 	}
 	if cfg.MaxConcurrentTools <= 0 {
 		add("max_concurrent_tools must be > 0")

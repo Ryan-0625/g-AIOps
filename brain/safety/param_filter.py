@@ -82,9 +82,13 @@ class ParamFilter:
         truncated = original_size > max_len
         value = value[:max_len]
 
-        if SHELL_META_RE.search(value):
+        if action in ("tool.create",) and key in ("script", "command"):
+            pass
+        elif SHELL_META_RE.search(value):
             return {"rejected": True, "reason": "shell metacharacters detected"}
-        if COMMAND_CHAIN_RE.search(value):
+        if action in ("tool.create",) and key in ("script", "command"):
+            pass
+        elif COMMAND_CHAIN_RE.search(value):
             return {"rejected": True, "reason": "command chain pattern detected"}
         if PATH_TRAVERSAL_RE.search(value):
             return {"rejected": True, "reason": "path traversal detected"}

@@ -43,8 +43,16 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Test
-        run: go test -v -count=1 -timeout=120s ./...
+      - name: Test with coverage
+        run: go test -v -count=1 -timeout=120s -coverprofile=coverage.out ./...
+
+      - name: Check coverage threshold (>= 30%)
+        run: |
+          COV=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $NF}' | sed 's/%//')
+          if [ "$(echo "$COV < 30" | bc)" -eq 1 ]; then
+            echo "Coverage $COV% < 30% -- FAIL"; exit 1
+          fi
+          echo "Coverage $COV% -- OK"
 
   # ── Master (TypeScript) ──────────────────────────────────────────────────
   master:
@@ -75,8 +83,8 @@ jobs:
       - name: Type check
         run: npm run lint
 
-      - name: Test
-        run: npm test -- --verbose --no-coverage
+      - name: Test with coverage
+        run: npm test -- --verbose
 
   # ── Brain (Python) ───────────────────────────────────────────────────────
   brain:
@@ -99,7 +107,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install ruff mypy
+          pip install ruff mypy pytest-cov
 
       - name: Lint config check
         run: test -f ruff.toml || (echo "Missing ruff.toml" && exit 1)
@@ -110,8 +118,8 @@ jobs:
       - name: Type check (mypy)
         run: mypy . --ignore-missing-imports
 
-      - name: Test
-        run: python -m pytest -v --tb=short
+      - name: Test with coverage
+        run: python -m pytest -v --tb=short --cov=. --cov-fail-under=30
 
   # ── Cross-layer contract check ──────────────────────────────────────────
   contract:

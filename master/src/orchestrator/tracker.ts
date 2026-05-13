@@ -35,9 +35,19 @@ export class Tracker {
   private readonly CHUNK_TIMEOUT_MS = 30_000;
   private readonly MAX_CHUNK_GROUPS = 500;
 
+  private _draining = false;
+
+  get draining(): boolean {
+    return this._draining;
+  }
+
   // ── Pending management ─────────────────────────────────────────────
 
   track(msgId: string, env: Envelope, targetWorkerId: string): boolean {
+    if (this._draining) {
+      logger.warn("Tracker draining, rejecting request", { msgId });
+      return false;
+    }
     if (this.pending.size >= this.MAX_PENDING) {
       logger.error("Tracker full, rejecting request", { msgId, data: { pending: this.pending.size } });
       return false;
@@ -92,6 +102,27 @@ export class Tracker {
   /** Number of pending entries. */
   pendingCount(): number {
     return this.pending.size;
+  }
+
+  drain(timeoutMs: number = 8000): Promise<void> {
+    this._draining = true;
+    logger.info("Tracker draining", { data: { pending: this.pending.size, timeoutMs } });
+    return new Promise((resolve) => {
+      const start = Date.now();
+      const poll = () => {
+        if (this.pending.size === 0) {
+          resolve();
+          return;
+        }
+        if (Date.now() - start >= timeoutMs) {
+          logger.warn("Tracker drain timeout", { data: { remaining: this.pending.size } });
+          resolve();
+          return;
+        }
+        setTimeout(poll, 100);
+      };
+      poll();
+    });
   }
 
   /** Retrieve a completed result by msg_id. */

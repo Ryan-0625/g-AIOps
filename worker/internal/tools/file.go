@@ -38,6 +38,13 @@ func init() {
 		RiskLevel:    "dangerous",
 		Execute:      executeFileWrite,
 	})
+	registry.Global.Register(registry.Tool{
+		Action:       "file.list",
+		Timeout:      10 * time.Second,
+		IsIdempotent: true,
+		RiskLevel:    "readonly",
+		Execute:      executeFileList,
+	})
 }
 
 func executeFileRead(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
@@ -77,10 +84,10 @@ func executeFileRead(ctx context.Context, params map[string]interface{}) (map[st
 	}
 
 	return map[string]interface{}{
-		"path":      absPath,
-		"content":   string(data),
+		"path":       absPath,
+		"content":    string(data),
 		"size_bytes": size,
-		"truncated": truncated,
+		"truncated":  truncated,
 	}, nil
 }
 
@@ -156,6 +163,46 @@ func executeFileWrite(ctx context.Context, params map[string]interface{}) (map[s
 		"path":       absPath,
 		"size_bytes": len(content),
 		"action":     action,
+	}, nil
+}
+
+func executeFileList(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	path, _ := params["path"].(string)
+	if path == "" {
+		path = "/"
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, executor.NewErr("INVALID_PATH", fmt.Sprintf("cannot resolve path: %v", err))
+	}
+
+	entries, err := os.ReadDir(absPath)
+	if err != nil {
+		return nil, executor.NewErr("READ_FAILED", fmt.Sprintf("cannot list directory: %v", err))
+	}
+
+	items := make([]map[string]interface{}, 0, len(entries))
+	for _, e := range entries {
+		info, _ := e.Info()
+		size := int64(0)
+		modTime := ""
+		if info != nil {
+			size = info.Size()
+			modTime = info.ModTime().Format(time.RFC3339)
+		}
+		items = append(items, map[string]interface{}{
+			"name":       e.Name(),
+			"is_dir":     e.IsDir(),
+			"size_bytes": size,
+			"mod_time":   modTime,
+		})
+	}
+
+	return map[string]interface{}{
+		"path":  absPath,
+		"items": items,
+		"count": len(items),
 	}, nil
 }
 

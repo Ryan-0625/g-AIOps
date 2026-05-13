@@ -13,7 +13,7 @@ services:
       - ./config/master.yaml:/etc/gaiops/master.yaml:ro
       - ${TLS_CERT_DIR:-./certs}:/etc/gaiops/certs:ro
     environment:
-      - CLUSTER_TOKEN=dev-token-change
+      - CLUSTER_TOKEN=${CLUSTER_TOKEN:-dev-token-change}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - AUDIT_LOG_PATH=${AUDIT_LOG_PATH:-}
       - AUDIT_ENABLED=${AUDIT_ENABLED:-true}
@@ -26,6 +26,16 @@ services:
       timeout: 5s
       retries: 3
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   worker:
     build:
@@ -36,8 +46,9 @@ services:
         condition: service_healthy
     volumes:
       - ./config/worker.yaml:/etc/gaiops/worker.yaml:ro
+      # Mount only specific paths the Worker needs, not the entire root filesystem.
       - /var/log:/var/log:ro
-      - /:/host:ro
+      - /var/run:/var/run:ro
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-info}
     command: ["--config", "/etc/gaiops/worker.yaml"]
@@ -47,7 +58,16 @@ services:
       timeout: 5s
       retries: 3
     restart: unless-stopped
-    pid: "host"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   brain:
     build:
@@ -62,12 +82,14 @@ services:
       - ./config/brain.yaml:/app/brain.yaml:ro
     environment:
       - LLM_PROVIDER=${LLM_PROVIDER:-openai}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-sk-4b40481af04f4d01b0a7a0f9590aec0c}
+      # WARNING: OPENAI_API_KEY must be set via .env file or environment variable.
+      # Never hardcode API keys in docker-compose files committed to version control.
+      - OPENAI_API_KEY=${OPENAI_API_KEY:?OPENAI_API_KEY is required}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.deepseek.com/v1}
       - OPENAI_MODEL=${OPENAI_MODEL:-deepseek-v4-flash}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5-7b}
-      - CLUSTER_TOKEN=dev-token-change
+      - CLUSTER_TOKEN=${CLUSTER_TOKEN:-dev-token-change}
       - MASTER_API_URL=http://master:8080
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:9091/health"]
@@ -75,3 +97,13 @@ services:
       timeout: 5s
       retries: 3
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

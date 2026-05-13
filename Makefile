@@ -39,6 +39,23 @@ test-master:
 test-brain:
 	cd brain && python -m pytest -v --tb=short 2>&1 | tail -20
 
+# === 覆盖率 ===
+
+.PHONY: test-coverage test-coverage-worker test-coverage-master test-coverage-brain
+
+test-coverage: test-coverage-worker test-coverage-master test-coverage-brain
+	@echo "[+] All coverage checks passed"
+
+test-coverage-worker:
+	cd worker && go test -v -race -count=1 -coverprofile=coverage.out ./... && \
+	  go tool cover -func=coverage.out
+
+test-coverage-master:
+	cd master && npm test -- --coverage 2>&1 | tail -20
+
+test-coverage-brain:
+	cd brain && python -m pytest -v --tb=short --cov=. --cov-fail-under=30 2>&1 | tail -20
+
 # === 代码检查 ===
 
 lint: lint-worker lint-master lint-brain

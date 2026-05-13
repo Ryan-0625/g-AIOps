@@ -26,11 +26,13 @@ import cmd
 import difflib
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
 import urllib.request
 import uuid
+import shutil
 from configparser import ConfigParser
 from pathlib import Path
 
@@ -51,18 +53,40 @@ HARDCODED_ACTIONS = [
 
 
 LOGO = r"""
-{b}   _____            _____    ____  _____   _____   {b}
-{b}  / ____|     /\   |_   _|  / __ \|  __ \ / ____|  {b}
-{b} | |  __     /  \    | |   | |  | | |__) | (___    {b}
-{b} | | |_ |   / /\ \   | |   | |  | |  ___/ \___ \   {b}
-{b} | |__| |  / ____ \ _| |_  | |__| | |     ____) |  {b}
-{b}  \_____| /_/    \_\_____|  \____/|_|    |_____/   {b}
+{b} _______         _______  ___   _______  _______  _______ {r}
+{b}|       |       |   _   ||   | |       ||       ||       |{r}
+{b}|    ___| ____  |  |_|  ||   | |   _   ||    _  ||  _____|{r}
+{b}|   | __ |____| |       ||   | |  | |  ||   |_| || |_____ {r}
+{b}|   ||  |       |       ||   | |  |_|  ||    ___||_____  |{r}
+{b}|   |_| |       |   _   ||   | |       ||   |     _____| |{r}
+{b}|_______|       |__| |__||___| |_______||___|    |_______|{r}
 """
 
 def _render_logo():
-    """Return the colored ASCII logo."""
+    """Return the colored ASCII logo with a decorative frame."""
     b = C.CYAN if _USE_COLOR else ""
-    return LOGO.format(b=b)
+    r = C.RESET if _USE_COLOR else ""
+    logo = LOGO.format(b=b, r=r)
+    lines = logo.strip("\n").split("\n")
+    w = _box_w()
+
+    out = [f"  ┌─{'─' * w}─┐"]
+    for line in lines:
+        v = _vlen(line)
+        left_pad = (w + 2 - v) // 2
+        right_pad = max(w + 2 - v - left_pad, 0)
+        out.append(f"  │{' ' * left_pad}{line}{' ' * right_pad}│")
+    out.append(f"  ├─{'─' * w}─┤")
+
+    tag = "gAIOps CLI"
+    ver = f"v{VERSION}"
+    foot = f"  {_dim(tag)}  {_info(ver)}" if _USE_COLOR else f"  {tag}  {ver}"
+    fv = _vlen(foot)
+    left_pad = (w + 2 - fv) // 2
+    right_pad = max(w + 2 - fv - left_pad, 0)
+    out.append(f"  │{' ' * left_pad}{foot}{' ' * right_pad}│")
+    out.append(f"  └─{'─' * w}─┘")
+    return "\n".join(out)
 
 
 SHORT_HELP = """  {c}Usage:{r}
@@ -90,6 +114,12 @@ if os.name == "nt":
     os.system("color")  # enable ANSI on Windows
     if sys.version_info >= (3, 7):
         try:
+            sys.stdin.reconfigure(encoding="utf-8")
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+        try:
+            sys.stdin.reconfigure(encoding="utf-8")
             sys.stdout.reconfigure(encoding="utf-8")
         except Exception:
             pass
@@ -154,6 +184,47 @@ def _fmt_uptime(seconds):
 
 def _fmt_timestamp():
     return time.strftime("%H:%M:%S")
+
+
+# ── Terminal UI Helpers ──────────────────────────────────────
+
+_ANSI_RE = re.compile(r'\033\[[0-9;]*[a-zA-Z]')
+
+def _vlen(text):
+    """Visible length of text excluding ANSI escape codes."""
+    return len(_ANSI_RE.sub('', text))
+
+def _box_w():
+    """Inner width for box-drawing characters."""
+    try:
+        return min(shutil.get_terminal_size().columns - 6, 80)
+    except Exception:
+        return 74
+
+def _box_top(label="", color=C.CYAN, ts=""):
+    """Top border with optional label and timestamp."""
+    w = _box_w()
+    if label:
+        lbl = f"{color}{label}{C.RESET}" if _USE_COLOR else label
+        left = f"┌─ {lbl} "
+    else:
+        left = "┌"
+    ts_str = f"── [{ts}]" if ts else ""
+    mid = "─" * max(w - _vlen(left) - _vlen(ts_str) + 1, 1)
+    return f"  {left}{mid}{ts_str}──┐"
+
+def _box_bottom():
+    """Bottom border of a box."""
+    w = _box_w()
+    return f"  └─{'─' * w}─┘"
+
+def _box_line(text="", indent=2):
+    """Single line inside a box."""
+    w = _box_w()
+    display = str(text)
+    v = _vlen(display)
+    pad = max(w + 2 - indent - v, 1)
+    return f"  │{' ' * indent}{display}{' ' * pad}│"
 
 
 # ── Config ───────────────────────────────────────────────────────────────────
@@ -394,8 +465,8 @@ def cmd_health(args):
 
 def cmd_worker_list(args):
     """List connected Workers."""
-    result = request("GET", "/api/v1/workers", args.base_url, args.token)
-    if result.get("status_code", 0) >= 400:
+    result = getattr(args, '_result', None) or request("GET", "/api/v1/workers", args.base_url, args.token)
+    if result.get("status_code", 0) >= 400 or result.get("error"):
         output(result, args.json)
         return
 
@@ -411,13 +482,12 @@ def cmd_worker_list(args):
 
     rows = []
     for w in workers:
-        actions = ", ".join(w.get("actions", []))
         version = w.get("worker_version", "?")
         load = f"{w.get('current_load', '?')}/{w.get('max_concurrent', '?')}"
         uptime = _fmt_uptime(w.get("uptime_seconds", 0))
-        rows.append((w.get("worker_id", "?"), load, version, uptime, actions))
+        rows.append((w.get("worker_id", "?"), load, version, uptime))
 
-    print_table(rows, ["WORKER ID", "LOAD", "VERSION", "UPTIME", "ACTIONS"], args.json)
+    print_table(rows, ["WORKER ID", "LOAD", "VERSION", "UPTIME"], args.json)
 
 
 def cmd_execute(args):
@@ -744,7 +814,10 @@ class GaiopsShell(cmd.Cmd):
 
     def do_workers(self, arg):
         """List connected workers (same as 'worker list')"""
-        cmd_worker_list(self._fake(base_url=self.base_url, token=self.token, json=False))
+        result = request("GET", "/api/v1/workers", self.base_url, self.token)
+        if self._check_auth(result):
+            return
+        cmd_worker_list(self._fake(base_url=self.base_url, token=self.token, json=False, _result=result))
 
     def do_status(self, arg):
         """Cluster status overview (health + workers + pending)"""
@@ -814,47 +887,31 @@ class GaiopsShell(cmd.Cmd):
     def do_help(self, arg):
         """Show help for commands or a specific command"""
         if arg:
-            # Show help for specific command.
             super().do_help(arg)
             return
-        # Categorized help overview.
+        # Flat, clean help list.
         c = C.CYAN if _USE_COLOR else ""
-        b = C.BOLD if _USE_COLOR else ""
         r = C.RESET if _USE_COLOR else ""
         d = C.DIM if _USE_COLOR else ""
-
-        cat = lambda t: f"\n  {b}{c}══ {t} ══{r}"
-        cmd = lambda n, h: f"    {c}{n:<15}{r} {d}{h}{r}"
-        sep = f"  {d}{'─'*50}{r}"
-
-        help_text = [
-            cat("Cluster & System"),
-            cmd("health", "Check cluster health"),
-            cmd("workers", "List connected workers"),
-            cmd("status", "Cluster status overview"),
-            cmd("traces", "List recent traces"),
-            cmd("trace", "Get trace details"),
-            sep,
-            cat("Tool Execution"),
-            cmd("exec", "Execute a tool action"),
-            cmd("result", "Get execution result"),
-            sep,
-            cat("Approval"),
-            cmd("approve", "Approve a pending operation"),
-            cmd("reject", "Reject a pending operation"),
-            sep,
-            cat("Chat & AI"),
-            cmd("chat", "Natural language chat with Brain AI"),
-            cmd("history", "Show chat history"),
-            sep,
-            cat("Config & Shell"),
-            cmd("config", "Show current configuration"),
-            cmd("exit", "Exit the shell"),
-            cmd("quit", "Exit the shell"),
-            sep,
-            f"\n  {d}Type '{c}help <command>{d}' for details.{r}",
+        cmds = [
+            ("health", "Check cluster health"),
+            ("workers", "List connected workers"),
+            ("status", "Cluster status overview"),
+            ("traces", "List recent traces"),
+            ("trace", "Get trace details"),
+            ("exec", "Execute a tool action"),
+            ("result", "Get execution result"),
+            ("approve", "Approve a pending approval"),
+            ("reject", "Reject a pending approval"),
+            ("chat", "Natural language chat with Brain AI"),
+            ("history", "Show chat history"),
+            ("token", "Set or show cluster token"),
+            ("config", "Show configuration"),
+            ("exit", "Exit the shell"),
         ]
-        print("\n".join(help_text))
+        for name, desc in cmds:
+            print(f"  {c}{name:<12}{r} {d}{desc}{r}")
+        print(f"\n  {d}Type 'help <command>' for details.{r}")
 
     # ---- chat ----
     def do_chat(self, arg):
@@ -863,22 +920,45 @@ class GaiopsShell(cmd.Cmd):
 
     def do_history(self, arg):
         """Show chat history from current session"""
-        if not self.chat_history:
-            print(f"  {_dim('No chat history yet.')}")
+        count = len(self.chat_history)
+        if not count:
+            print(f"  {_dim('No messages yet.')}")
             return
-        print(f"\n  {_bold('Chat History')}")
-        print(f"  {_dim('─'*50)}")
+        print(f"  {_info('History')}  {_dim(f'({count} msgs)')}")
         for entry in self.chat_history:
             role = entry["role"]
-            msg = entry["message"]
+            msg = str(entry.get("message", ""))
+            t = entry.get("time", "")
+            time_str = f" [{t}]" if t else ""
             if role == "user":
-                print(f"  {_bold('You')}> {msg}")
+                print(f"    {_bold('You')}{_dim(time_str)}  {msg[:150]}")
             else:
-                print(f"  {_info('Brain')}> {msg[:200]}")
+                brain_msg = msg[:200]
                 if entry.get("summary"):
-                    print(f"       {_dim(entry['summary'][:120])}")
-        print(f"  {_dim('─'*50)}")
-        print(f"  {len(self.chat_history)} messages")
+                    brain_msg += _dim(" ...")
+                print(f"    {_info('Brain')}{_dim(time_str)}  {brain_msg}")
+
+    # ---- auth ----
+    def do_token(self, arg):
+        """Show or set the cluster token: token [value]"""
+        if arg:
+            self.token = arg.strip()
+            print(f"  {_ok('Token updated.')}")
+        elif self.token:
+            masked = self.token[:4] + "****" if len(self.token) > 4 else "****"
+            print(f"  Token: {_dim(masked)}")
+        else:
+            print(f"  {_warn('No token set. Use: token <value>')}")
+
+    def _check_auth(self, result: dict) -> bool:
+        """Check if result is AUTH_FAILED and print help. Returns True if auth failed."""
+        err = result.get("error", {})
+        if isinstance(err, dict) and err.get("code") == "AUTH_FAILED":
+            print(f"  {_err('认证失败，请设置集群令牌:')}")
+            print(f"    {_dim('token <your-token>')}")
+            print(f"    {_dim('或启动时: python cli/gaiops shell --token <token>')}")
+            return True
+        return False
 
     # ---- built-in overrides ----
     def do_exit(self, arg):
@@ -905,9 +985,14 @@ class GaiopsShell(cmd.Cmd):
 
 def cmd_shell(args):
     """Enter interactive REPL mode."""
+    if sys.stdout.isatty():
+        os.system("cls" if os.name == "nt" else "clear")
     banner = _render_logo()
     print(banner)
-    print(f"  {_dim('Interactive shell. Type help or exit.')}\n")
+    print(_box_top("Shell", C.CYAN, _fmt_timestamp()))
+    print(_box_line(_dim("Interactive mode - type help for commands, exit to quit."), indent=2))
+    print(_box_bottom())
+    print()
     try:
         GaiopsShell(args.base_url, args.token, getattr(args, 'brain_url', DEFAULT_BRAIN_URL)).cmdloop()
     except AttributeError as e:
@@ -926,17 +1011,85 @@ def _patch_readline():
         rl.backend = "windows" if os.name == "nt" else "generic"
 
 
+def _humanize(text, lang="en"):
+    """Replace raw/internal Brain messages with user-friendly text."""
+    if not text:
+        return text
+    # Planner failure
+    if "Planner could not create a valid plan" in text:
+        if lang == "zh":
+            return "抱歉，我无法处理这个问题。请尝试询问系统运维相关的问题。"
+        return "Sorry, I couldn't process that request. Please ask about system operations."
+    # Cycle detected
+    if "Cycle detected" in text:
+        if lang == "zh":
+            return "检测到重复错误，已停止执行。请检查 Worker 状态后重试。"
+        return "Recurring error detected. Execution stopped. Please check worker status."
+    # Total retries exceeded
+    if "Total retries" in text and "exceeded" in text:
+        if lang == "zh":
+            return "操作执行失败：重试次数已用完。请稍后重试或检查系统状态。"
+        return "Operation failed: retries exhausted. Please try again later or check system status."
+    # Non-retryable error
+    if "Non-retryable error" in text:
+        if lang == "zh":
+            return "操作执行失败：遇到不可恢复的错误。"
+        return "Operation failed: non-recoverable error encountered."
+    # No worker available error
+    if "No worker available" in text:
+        if lang == "zh":
+            return "没有可用的 Worker 节点来执行此操作。请检查 Worker 是否在运行。"
+        return "No available worker to perform this action. Please check if workers are running."
+    # Node / worker not found
+    if any(p in text for p in ["worker not found", "node not found", "unknown worker", "unknown node", "no such worker", "no such node"]):
+        if lang == "zh":
+            return "未找到指定的节点，请检查节点 ID 是否正确。"
+        return "Specified node not found. Please check the node ID."
+    # Execution error
+    if "Error executing" in text or "execution error" in text.lower():
+        if lang == "zh":
+            return "执行操作时出错。请检查 Worker 状态后重试。"
+        return "Error executing the operation. Please check worker status and try again."
+    # Plan executed with failures in summaries
+    if text == "Plan executed." or text == "Plan executed" or text == "Session ended.":
+        if lang == "zh":
+            return "操作执行完成，但部分步骤可能未成功。"
+        return "Operation completed, but some steps may have failed."
+    # Filter out raw internal lines from multi-line responses
+    lines = text.split("\n")
+    clean = []
+    for ln in lines:
+        s = ln.strip()
+        # Skip raw internal lines
+        if s.startswith("Analysis:") or s.startswith("{") or s.startswith("}"):
+            continue
+        if s.startswith("FAIL:") or s.startswith("Plan:") or s.startswith("Step "):
+            continue
+        if "error=" in s and "→" in s:
+            continue
+        clean.append(ln)
+    return "\n".join(clean).strip() or text
+
+
+def _chat_sep():
+    """Print a subtle separator between conversation turns."""
+    print(f"\n  {_dim('─' * (_box_w() + 2))}")
+
+
 def _cmd_chat_loop(base_url, token, brain_url, history_store=None):
-    """Internal chat loop — send messages to Brain, show responses."""
+    """Internal chat loop — clean conversation flow."""
     if history_store is None:
         history_store = []
 
-    print(f"  {_info('Chat mode')} — Natural language with Brain AI")
-    print(f"  {_dim('Commands: /exit  /workers  /history  /clear')}\n")
+    # ── Chat mode header ──────────────────────────────
+    print(_box_top("Chat Mode", C.CYAN))
+    print(_box_line(_dim("/exit  /workers  /history  /clear")))
+    print(_box_bottom())
+    print()
 
     while True:
         try:
-            raw = input(f"  {_bold('You')}> ")
+            raw = input(f"  {_bold('>')} ")
         except (EOFError, KeyboardInterrupt):
             print()
             break
@@ -945,7 +1098,7 @@ def _cmd_chat_loop(base_url, token, brain_url, history_store=None):
         if not text:
             continue
 
-        # Slash commands.
+        # ── Slash commands ────────────────────────────
         if text.startswith("/"):
             cmd = text.lower()
             if cmd in ("/exit", "/quit", "/q"):
@@ -958,23 +1111,59 @@ def _cmd_chat_loop(base_url, token, brain_url, history_store=None):
                 continue
             elif cmd == "/clear":
                 history_store.clear()
-                print(f"  {_dim('History cleared.')}")
+                print(f"  {_dim('Chat history cleared.')}")
                 continue
             elif cmd == "/help":
-                print(f"  {_dim('/exit  /workers  /history  /clear')}")
+                print(f"  {_bold('/exit')}     {_dim('Exit chat mode')}")
+                print(f"  {_bold('/workers')}  {_dim('Show connected workers')}")
+                print(f"  {_bold('/history')}  {_dim('Show chat history')}")
+                print(f"  {_bold('/clear')}    {_dim('Clear chat history')}")
+                continue
+            else:
+                print(f"  {_warn(f'Unknown: {cmd}')}")
+                print(f"  {_dim('Type /help for commands')}")
                 continue
 
-        # Send to Brain API.
-        sys.stdout.write(f"  {_info('Brain')}> ")
-        sys.stdout.flush()
+        # ── User message (prompt line already shows it) ──
+        ts = _fmt_timestamp()
+        lang = "zh" if re.search(r'[一-鿿]', text) else "en"
 
+        # ── Detect missing node selection ────────────────────
+        needs_node = (
+            lang == "zh" and re.search(r'(节点|worker|服务|机器)', text)
+            and not re.search(r'(node-\d+|worker-\d+|localhost|\d+\.\d+\.\d+\.\d+)', text)
+            and not text.startswith("/")
+        )
+        if needs_node:
+            wr = request("GET", "/api/v1/workers", base_url, token)
+            workers = wr.get("workers", []) if wr.get("status_code", 0) < 400 else []
+            if len(workers) > 1:
+                print(f"\n  {_info('Brain')}  {_dim(f'[{_fmt_timestamp()}]')}")
+                print(f"    {'你有多个节点，请指定要操作的节点:' if lang == 'zh' else 'Multiple nodes available, please specify:'}")
+                for i, w in enumerate(workers, 1):
+                    wid = w.get("worker_id", "?")
+                    load = f"{w.get('current_load', 0)}/{w.get('max_concurrent', 1)}"
+                    print(f"      {i}. {_c(wid, C.CYAN)}  {_dim(f'[{load}]')}")
+                if lang == "zh":
+                    print(f"    {'例如: 检查 node-1 上的服务'}")
+                else:
+                    print(f"    {'Example: check services on node-1'}")
+                _chat_sep()
+                continue
+
+        # ── Send to Brain API ─────────────────────────
         try:
             result = request("POST", "/api/chat", brain_url, token, {
                 "message": text,
             })
         except Exception as e:
-            print(f"\n  {_err('[ERROR]')} Brain unreachable: {e}")
-            print(f"  {_dim('Ensure Brain is running and --brain-url is correct.')}")
+            ts_err = _fmt_timestamp()
+            print(f"\n  {_info('Brain')}  {_dim(f'[{ts_err}]')}")
+            print(f"    {_err(f'Connection error: {e}')}")
+            print(f"    {_dim('Check that Brain is running.')}")
+            history_store.append({"role": "user", "message": text, "time": ts})
+            history_store.append({"role": "brain", "message": f"[Error] {e}", "time": ts_err})
+            _chat_sep()
             continue
 
         conclusion = result.get("conclusion", "No response.") if isinstance(result, dict) else "No response."
@@ -982,87 +1171,105 @@ def _cmd_chat_loop(base_url, token, brain_url, history_store=None):
         status = result.get("status", "") if isinstance(result, dict) else ""
         error = result.get("error", "") if isinstance(result, dict) else ""
 
+        # ── Brain response ────────────────────────────
+        ts_resp = _fmt_timestamp()
+        print(f"\n  {_info('Brain')}  {_dim(f'[{ts_resp}]')}")
+
         if result.get("status_code", 0) and result["status_code"] >= 400:
-            print(f"\n  {_err('[ERROR]')} {_error_summary(result)}")
-            print(f"  {_dim('Check: gaiops health, and ensure Brain is running.')}")
+            print(f"    {_err(_error_summary(result))}")
+            history_store.append({"role": "user", "message": text, "time": ts})
+            history_store.append({"role": "brain", "message": _error_summary(result), "time": ts_resp})
+            _chat_sep()
             continue
-
-        if error:
-            print(f"\n  {_err(str(error)[:200])}")
+        elif error:
+            print(f"    {_err(str(error)[:200])}")
+            history_store.append({"role": "user", "message": text, "time": ts})
+            history_store.append({"role": "brain", "message": str(error), "time": ts_resp})
+            _chat_sep()
             continue
-
-        if status == "running":
-            print(f"\n  {_warn('Still processing...')} {_dim('(try again in a moment)')}")
+        elif status == "running":
+            print(f"    {_warn('Still processing...')}")
+            history_store.append({"role": "user", "message": text, "time": ts})
+            history_store.append({"role": "brain", "message": "Still processing...", "time": ts_resp})
+            _chat_sep()
             continue
-
-        # Display response.
-        if result.get("fast_path"):
-            rstatus = result.get("status", "")
-            tool = result.get("tool", "")
-            data = result.get("data", {})
-            if rstatus == "rejected":
-                print(f"  {_warn(str(conclusion)[:300])}")
-            elif rstatus == "failed":
-                print(f"  {_err(str(conclusion)[:300])}")
-            elif tool:
-                print(f"  {_ok(str(conclusion)[:300])}")
-                if isinstance(data, dict) and data:
-                    for k, v in list(data.items())[:10]:
-                        print(f"    {_dim(k)}: {v}")
-                elif isinstance(data, list) and data:
-                    for item in data[:10]:
-                        print(f"    {item}")
-            else:
-                print(f"  {str(conclusion)[:500]}")
+        elif result.get("fast_path"):
+            _display_fast_path(result, lang)
         else:
-            print(f"{conclusion[:500]}")
-            if summaries:
-                for s in summaries[-3:]:  # Show last 3 steps max.
-                    print(f"       {_dim(s[:120])}")
+            display = _humanize(str(conclusion)[:800], lang)
+            for ln in display.split("\n"):
+                print(f"    {ln}")
 
-        # Store history.
-        ts = _fmt_timestamp()
+        # ── Store history ─────────────────────────────
         history_store.append({"role": "user", "message": text, "time": ts})
-        history_store.append({"role": "brain", "message": conclusion, "summary": summaries, "time": ts})
+        history_store.append({"role": "brain", "message": conclusion, "summary": summaries, "time": ts_resp})
 
-    print(f"  {_dim('Exited chat mode.')}")
+        _chat_sep()
+
+    # ── Exit message ─────────────────────────────────
+    print(f"  {_dim('Chat session ended.')}")
+
+
+def _display_fast_path(result, lang="en"):
+    """Render fast-path result lines — concise, no raw data dump."""
+    rstatus = result.get("status", "")
+    conclusion = _humanize(str(result.get("conclusion", "")), lang)
+
+    if rstatus == "rejected":
+        print(f"    {_warn(conclusion[:300])}")
+    elif rstatus == "failed":
+        print(f"    {_err(conclusion[:300])}")
+    elif result.get("tool"):
+        print(f"    {conclusion[:300]}")
+    else:
+        print(f"    {conclusion[:500]}")
 
 
 def _cmd_chat_show_workers(base_url, token):
     """Show available workers (for /workers in chat mode)."""
     result = request("GET", "/api/v1/workers", base_url, token)
-    workers = result.get("workers", [])
-    if not workers:
-        print(f"  {_warn('[WARN]')} No workers connected.")
+    err = result.get("error", {})
+    if isinstance(err, dict) and err.get("code") == "AUTH_FAILED":
+        print(f"  {_err('认证失败，请设置集群令牌') if '认证' not in str(err) else str(err)}")
+        print(f"    {_dim('使用 token 命令设置令牌')}")
         return
-    print(f"  {_bold('Available Workers:')}")
-    for w in workers:
-        wid = w.get("worker_id", "?")
-        load = f"{w.get('current_load', 0)}/{w.get('max_concurrent', 1)}"
-        actions = ", ".join(w.get("actions", []))
-        print(f"    {_c(wid, C.CYAN)}  {_dim(f'[{load}]')}  {actions}")
+    workers = result.get("workers", [])
+    print(f"  {_info('Workers')}")
+    if not workers:
+        print(f"    {_warn('No workers connected.')}")
+        print(f"    {_dim('Start: docker compose up -d worker')}")
+    else:
+        for w in workers:
+            wid = w.get("worker_id", "?")
+            load = f"{w.get('current_load', 0)}/{w.get('max_concurrent', 1)}"
+            print(f"    {_c(wid, C.CYAN)}  {_dim(f'[{load}]')}")
 
 
 def _cmd_chat_show_history(history_store):
     """Show chat history (for /history in chat mode)."""
+    count = len(history_store)
+    print(f"  {_info('History')}  {_dim(f'({count} msgs)')}")
     if not history_store:
-        print(f"  {_dim('No chat history.')}")
-        return
-    print(f"\n  {_bold('Chat History')}")
-    print(f"  {_dim('─'*50)}")
-    for entry in history_store:
-        role = entry["role"]
-        msg = entry["message"]
-        if role == "user":
-            print(f"  {_bold('You')}> {msg[:150]}")
-        else:
-            print(f"  {_info('Brain')}> {msg[:200]}")
-    print(f"  {_dim('─'*50)}")
-    print(f"  {len(history_store)} messages")
+        print(f"    {_dim('No messages yet.')}")
+    else:
+        for entry in history_store:
+            role = entry["role"]
+            msg = str(entry.get("message", ""))
+            t = entry.get("time", "")
+            time_str = f" [{t}]" if t else ""
+            if role == "user":
+                print(f"    {_bold('You')}{_dim(time_str)}  {msg[:150]}")
+            else:
+                brain_msg = msg[:200]
+                if entry.get("summary"):
+                    brain_msg += _dim(" ...")
+                print(f"    {_info('Brain')}{_dim(time_str)}  {brain_msg}")
 
 
 def cmd_chat(args):
     """Natural language chat with Brain AI."""
+    if sys.stdout.isatty():
+        os.system("cls" if os.name == "nt" else "clear")
     banner = _render_logo()
     print(banner)
     _cmd_chat_loop(args.base_url, args.token, args.brain_url)

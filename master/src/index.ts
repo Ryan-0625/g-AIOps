@@ -1,8 +1,8 @@
-import express from "express";
+import express, { Request, Response, NextFunction } from "express";
 import http from "http";
 import https from "https";
 import fs from "fs";
-import { load as loadConfig } from "./config";
+import { load as loadConfig, validate as validateConfig } from "./config";
 import { Registry } from "./store/registry";
 import { Tracker } from "./orchestrator/tracker";
 import { PriorityQueue } from "./orchestrator/priority-queue";
@@ -20,7 +20,35 @@ import { MetricsCollector } from "./store/metrics";
 import { metricsRouter } from "./server/metrics";
 
 const logger = createLogger("master");
+
+// Process-level crash handlers — must be registered before main().
+process.on("uncaughtException", (err) => {
+  logger.error("Uncaught exception", {
+    data: { message: err.message, stack: err.stack },
+  });
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  logger.error("Unhandled rejection", {
+    data: { reason: reason instanceof Error ? reason.message : String(reason) },
+  });
+});
+
 const cfg = loadConfig();
+
+// Validate config — log warnings, exit on errors.
+const { warnings, errors } = validateConfig(cfg);
+for (const w of warnings) {
+  logger.warn("Config: " + w.message, { data: { field: w.field } });
+}
+if (errors.length > 0) {
+  for (const e of errors) {
+    logger.error("Config: " + e.message, { data: { field: e.field } });
+  }
+  logger.error("Config validation failed — exiting", { data: { error_count: errors.length } });
+  process.exit(1);
+}
 
 // TLS config (consumed directly from env for cert file paths)
 const TLS_CERT = process.env.TLS_CERT_PATH;
@@ -81,10 +109,20 @@ function main(): void {
   );
 
   // ── Routes ──
-  app.use(healthRouter(registry, tracker, approver));
+  app.use(healthRouter(registry, tracker, approver, cfg));
   app.use(metricsRouter(registry, tracker, queue, approver, metricsCollector));
   app.use(brainApiRouter(registry, queue, masterRouter, tracker, summarizer, interceptor, approver, wsServer, cfg.cluster_token, metricsCollector));
   app.use(traceRouter(tracker));
+
+  // Catch-all Express error middleware — must be last app.use().
+  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+    const status = err.status || err.statusCode || 500;
+    const message = err.message || "Internal Server Error";
+    logger.error("Unhandled error", {
+      data: { status, message, stack: err.stack },
+    });
+    res.status(status).json({ error: message, status: "error" });
+  });
 
   // ── Periodic maintenance ──
   setInterval(() => {
@@ -103,8 +141,10 @@ function main(): void {
   });
 
   // ── Graceful shutdown ──
-  const shutdown = (signal: string) => {
+  const shutdown = async (signal: string) => {
     logger.info("Shutting down", { data: { signal } });
+    // Drain in-flight requests before closing server.
+    await tracker.drain(8000);
     server.close(() => {
       logger.info("Master stopped", { data: {} });
       process.exit(0);

@@ -33,6 +33,7 @@ worker/worker.exe
 # Master
 master/node_modules/
 master/dist/
+master/coverage/
 
 # Logs
 *.log

@@ -107,14 +107,19 @@ class LLMOutputSanitizer:
         result: dict[str, Any] = {}
         for key, value in params.items():
             if isinstance(value, str):
-                # Shell metacharacter detection.
-                if SHELL_META_RE.search(value):
+                # Shell metacharacter detection — skip for script parameters
+                # (tool.create intentionally contains shell code in "script").
+                if action in ("tool.create",) and key in ("script", "command"):
+                    pass
+                elif SHELL_META_RE.search(value):
                     raise ParamSanitizationError(
                         f"param '{key}' contains shell metacharacters"
                     )
 
-                # Command chain detection.
-                if COMMAND_CHAIN_RE.search(value):
+                # Command chain detection — skip for tool.create scripts.
+                if action in ("tool.create",) and key in ("script", "command"):
+                    pass
+                elif COMMAND_CHAIN_RE.search(value):
                     raise ParamSanitizationError(
                         f"param '{key}' looks like a command chain"
                     )

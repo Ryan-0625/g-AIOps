@@ -15,6 +15,7 @@ import (
 	"github.com/gaiops/worker/internal/logger"
 	"github.com/gaiops/worker/internal/registry"
 	"github.com/gaiops/worker/internal/reporter"
+	"github.com/gaiops/worker/internal/server"
 	"github.com/gaiops/worker/pkg/envelope"
 )
 
@@ -45,6 +46,7 @@ type Config struct {
 	MaxConcurrent     int               // max concurrent tool executions
 	WorkerVersion     string            // build version
 	TLSSkipVerify     bool              // skip TLS cert verification (dev only)
+	MaxAttempts       int               // max reconnect attempts (0 = unlimited)
 }
 
 func New(cfg Config, exec *executor.Executor, log *logger.Logger) *Client {
@@ -119,6 +121,7 @@ func (c *Client) connect(ctx context.Context) error {
 	c.mu.Unlock()
 
 	c.log.Info("Connected to Master")
+	server.SetMasterConnected(true)
 	return nil
 }
 
@@ -266,6 +269,7 @@ func (c *Client) send(env *envelope.Envelope) {
 func (c *Client) close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	server.SetMasterConnected(false)
 
 	if c.conn != nil {
 		c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))

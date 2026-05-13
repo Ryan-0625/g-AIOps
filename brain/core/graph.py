@@ -8,12 +8,15 @@ Flow:
 
 import asyncio
 import json
+import random
+import time
 from typing import Any
 
 from core.state import GraphState
 from agents.analyst import analyst_node
 from agents.planner import planner_node
 from agents.reflector import reflector_node
+from agents.deployer import Deployer
 from llm.adapter import LLMAdapter
 from llm.schemas import ALL_TOOLS, _llm_name, _action_name
 from llm.context_window import compress_messages
@@ -62,11 +65,15 @@ class GraphEngine:
     escalating to human intervention.
     """
 
-    def __init__(self, llm: LLMAdapter, master: MasterClient, read_only: bool = False):
+    def __init__(self, llm: LLMAdapter, master: MasterClient, read_only: bool = False,
+                 llm_max_retries: int = 2, metrics: Any = None):
         self.llm = llm
         self.master = master
         self.read_only = read_only
+        self.llm_max_retries = llm_max_retries
+        self.metrics = metrics
         self.degraded = False
+        self.deployer = Deployer(master)
         self.active_sessions: dict[str, asyncio.Task] = {}
         self.completed_sessions: dict[str, dict] = {}
         self._tool_descriptions = _build_tool_descriptions()
@@ -131,6 +138,36 @@ class GraphEngine:
                     error = result.get("error", {})
                     state.last_error = error.get("code", "") if error else ""
 
+                    # ── Dynamic deployment: try to deploy missing tool ──
+                    if state.last_status == "failure" and state.last_error == "NO_AVAILABLE_WORKER":
+                        action_name = step["action"]
+                        if self.deployer.has_template(action_name):
+                            logger.info("Deploying missing tool", extra={
+                                "data": {"action": action_name, "trace_id": state.trace_id},
+                            })
+                            deployed = await self.deployer.deploy(
+                                action=action_name,
+                                trace_id=state.trace_id,
+                            )
+                            if deployed:
+                                # Give worker time to re-advertise capabilities.
+                                await asyncio.sleep(2)
+                                # Retry execution.
+                                result = await self.master.execute(
+                                    action=step["action"],
+                                    params=step.get("params", {}),
+                                    trace_id=state.trace_id,
+                                )
+                                state.last_status = result.get("status", "failure")
+                                state.last_data = result.get("data", {})
+                                error = result.get("error", {})
+                                state.last_error = error.get("code", "") if error else ""
+
+                                if state.last_status == "success":
+                                    logger.info("Tool deployed and executed", extra={
+                                        "data": {"action": action_name, "trace_id": state.trace_id},
+                                    })
+
                     if result.get("truncated"):
                         state.truncated_responses.append(True)
                         state.last_data["_truncation_notice"] = (
@@ -141,6 +178,8 @@ class GraphEngine:
 
                     if state.needs_human or state.cycle_detected:
                         break
+
+                    # Deployed tools persist on Worker for future sessions.
 
                 if state.needs_human or state.cycle_detected:
                     break
@@ -153,18 +192,44 @@ class GraphEngine:
                 # Plan completed.
                 if state.is_done():
                     if not state.conclusion:
-                        state.conclusion = "Plan executed."
+                        # Check if there were failures in summaries
+                        has_failures = any("FAIL:" in s for s in state.summaries)
+                        if has_failures:
+                            # Extract the last failed action for a helpful message
+                            failed_action = state.last_action or ""
+                            if failed_action:
+                                state.conclusion = (
+                                    f"Operation failed: {failed_action} could not be "
+                                    f"executed on any available worker."
+                                )
+                            else:
+                                state.conclusion = (
+                                    "Operation partially completed with errors."
+                                )
+                        else:
+                            state.conclusion = "Plan executed."
                         state.add_summary(state.conclusion)
                     break
 
-            # Ensure a conclusion always exists.
+            # Ensure a conclusion always exists with meaningful text.
             if not state.conclusion:
                 if state.needs_human:
-                    state.conclusion = "Session ended — needs human intervention."
+                    has_failures = any("FAIL:" in s for s in state.summaries)
+                    if has_failures and state.last_action:
+                        state.conclusion = (
+                            f"Unable to complete: {state.last_action} failed. "
+                            f"Human intervention may be required."
+                        )
+                    else:
+                        state.conclusion = "Session ended — needs human intervention."
                 elif state.cycle_detected:
                     state.conclusion = "Session ended — cycle detected."
                 else:
-                    state.conclusion = "Session ended."
+                    has_failures = any("FAIL:" in s for s in state.summaries)
+                    if has_failures:
+                        state.conclusion = "Operation completed with errors."
+                    else:
+                        state.conclusion = "Session ended."
 
             logger.info("Session ended", extra={
                 "data": {
@@ -183,6 +248,11 @@ class GraphEngine:
             state.needs_human = True
             state.conclusion = f"Brain session failed: {e}"
         finally:
+            # Deployed tools persist on Worker for future sessions.
+            logger.info("Deployed tools left in place", extra={
+                "data": {"trace_id": state.trace_id, "deployed": list(self.deployer._deployed)},
+            })
+
             # Store result for chat API retrieval.
             self.completed_sessions[state.trace_id] = {
                 "trace_id": state.trace_id,
@@ -256,45 +326,73 @@ class GraphEngine:
         # Compress if needed.
         messages = compress_messages(messages, state.summaries)
 
-        import time
-        try:
-            t0 = time.monotonic()
-            response = await self.llm.chat(messages=messages, tools=ALL_TOOLS, timeout=30.0)
-            elapsed = time.monotonic() - t0
-            # Auto-degrade if LLM response is consistently slow (>20s).
-            if self.read_only and elapsed > 20.0:
-                self.degraded = True
-                logger.warning("LLM response slow — degrading to read-only mode", extra={
-                    "data": {"trace_id": state.trace_id, "elapsed_seconds": round(elapsed, 1)},
-                })
-            if isinstance(response, dict):
-                message = response.get("message", {})
-                # Ollama tool_calls format.
-                tool_calls = message.get("tool_calls", [])
-                if tool_calls:
-                    fn = tool_calls[0].get("function", {})
-                    raw_params = fn.get("arguments", {})
-                    # Tool call arguments are JSON strings per API spec.
-                    if isinstance(raw_params, str):
-                        try:
-                            raw_params = json.loads(raw_params)
-                        except json.JSONDecodeError:
-                            raw_params = {}
-                    return json.dumps({
-                        "action": _action_name(fn.get("name", "")),
-                        "params": raw_params,
+        # Retry loop with exponential backoff for transient failures.
+        last_error: str | None = None
+        for attempt in range(self.llm_max_retries + 1):
+            if self.metrics:
+                self.metrics.llm_calls_total += 1
+            try:
+                t0 = time.monotonic()
+                response = await self.llm.chat(messages=messages, tools=ALL_TOOLS, timeout=30.0)
+                elapsed = time.monotonic() - t0
+                # Auto-degrade if LLM response is consistently slow (>20s).
+                if self.read_only and elapsed > 20.0:
+                    self.degraded = True
+                    logger.warning("LLM response slow — degrading to read-only mode", extra={
+                        "data": {"trace_id": state.trace_id, "elapsed_seconds": round(elapsed, 1)},
                     })
-                # Plain text response.
-                content = message.get("content", "")
-                if content.strip():
-                    return content
-            return str(response) if response else None
-        except Exception as e:
-            logger.error("LLM call failed", extra={
-                "error_code": "BRAIN_LLM_UNAVAILABLE",
-                "data": {"trace_id": state.trace_id, "error": str(e)},
-            })
-            return None
+                if isinstance(response, dict):
+                    message = response.get("message", {})
+                    # Ollama tool_calls format.
+                    tool_calls = message.get("tool_calls", [])
+                    if tool_calls:
+                        fn = tool_calls[0].get("function", {})
+                        raw_params = fn.get("arguments", {})
+                        # Tool call arguments are JSON strings per API spec.
+                        if isinstance(raw_params, str):
+                            try:
+                                raw_params = json.loads(raw_params)
+                            except json.JSONDecodeError:
+                                raw_params = {}
+                        return json.dumps({
+                            "action": _action_name(fn.get("name", "")),
+                            "params": raw_params,
+                        })
+                    # Plain text response.
+                    content = message.get("content", "")
+                    if content.strip():
+                        return content
+                return str(response) if response else None
+
+            except (asyncio.TimeoutError, ConnectionError, json.JSONDecodeError) as e:
+                last_error = str(e)
+                logger.warning("LLM call attempt %d/%d failed (retryable): %s",
+                               attempt + 1, self.llm_max_retries + 1, last_error,
+                               extra={"data": {"trace_id": state.trace_id}})
+                if attempt < self.llm_max_retries:
+                    delay = min(1.0 * (2 ** attempt), 15.0)  # cap at 15s
+                    jitter = random.uniform(0.75, 1.25)
+                    await asyncio.sleep(delay * jitter)
+
+            except Exception as e:
+                # Non-retryable or unknown error — log and give up immediately.
+                last_error = str(e)
+                if self.metrics:
+                    self.metrics.llm_errors_total += 1
+                logger.error("LLM call failed (non-retryable)", extra={
+                    "error_code": "BRAIN_LLM_UNAVAILABLE",
+                    "data": {"trace_id": state.trace_id, "error": str(e)},
+                })
+                return None
+
+        # All retries exhausted.
+        if self.metrics:
+            self.metrics.llm_errors_total += 1
+        logger.error("LLM call failed after %d attempts", self.llm_max_retries + 1, extra={
+            "error_code": "BRAIN_LLM_UNAVAILABLE",
+            "data": {"trace_id": state.trace_id, "last_error": last_error},
+        })
+        return None
 
     async def get_session_status(self, trace_id: str) -> dict[str, Any]:
         """Check if a session is still running or completed."""
