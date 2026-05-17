@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/gaiops/worker/internal/reporter"
-	"github.com/gaiops/worker/pkg/envelope"
+	""
 )
 
 func TestMetricsHandlerNoReporter(t *testing.T) {
