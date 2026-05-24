@@ -2,11 +2,17 @@
 //
 // On connect, both sides exchange their supported version ranges.
 // The selected version is the highest common minor version.
+//
+// v1.1: adds tool_deploy/tool_code/tool_status msg_type, code_body, deploy_id, runtime_hints.
+//       Backward compatible — v1.0 nodes reject unknown msg_type gracefully via validateEnvelope.
 
 export interface VersionRange {
   min: string; // "1.0"
   max: string; // "1.1"
 }
+
+// Local supported range. v1.1 supports dynamic tools.
+export const LOCAL_VERSION: VersionRange = { min: "1.0", max: "1.1" };
 
 function parseVersion(v: string): number[] {
   return v.split(".").map(Number);
@@ -18,15 +24,4 @@ export function negotiate(local: VersionRange, remote: VersionRange): string | n
   const lMin = parseVersion(local.min);
   const lMax = parseVersion(local.max);
   const rMin = parseVersion(remote.min);
-  const rMax = parseVersion(remote.max);
-
-  // Major version must match.
-  if (lMin[0] !== rMin[0] || lMax[0] !== rMax[0]) return null;
-
-  // The overlapping range.
-  const selectedMajor = lMin[0];
-  const selectedMinor = Math.min(lMax[1], rMax[1]);
-  if (selectedMinor < Math.max(lMin[1], rMin[1])) return null;
-
-  return `${selectedMajor}.${selectedMinor}`;
-}
+  const rMax = parseVersion(remote.m

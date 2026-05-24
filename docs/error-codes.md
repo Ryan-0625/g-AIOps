@@ -16,6 +16,9 @@
 | `PROTO_*` | 协议层 |
 | `AUTH_*` | 认证 |
 | `EXEC_*` | 执行环境 |
+| `DEPLOY_*` | 动态工具部署 |
+| `CODE_*` | 工具代码生成（Brain） |
+| `MEM_*` | 记忆模块 |
 
 ---
 
@@ -240,11 +243,27 @@
 
 ---
 
-## 各层错误分类速查
+## 动态工具错误码
 
-| Brain 策略 | 错误码 |
-|-----------|--------|
-| **retry** — 可重试，不修改参数 | EXECUTION_TIMEOUT, CONNECTION_RESET, WORKER_OFFLINE, TTL_EXPIRED, NO_AVAILABLE_WORKER, SHUTTING_DOWN, WORKER_OVERLOAD, MASTER_OVERLOAD, BRAIN_STREAM_ERROR |
-| **replan** — 需调整方案后重试 | INVALID_ARGS, COMMAND_NOT_ALLOWED, PATH_NOT_ALLOWED, SERVICE_NOT_FOUND, SERVICE_ALREADY_RUNNING, PING_FAILED, PROCESS_NOT_FOUND, APPROVAL_TIMEOUT, UNKNOWN_TOOL, PARAM_MISSING, PARAM_SANITIZED, MISSING_TRACE_ID, MISSING_ACTION, INVALID_ENVELOPE |
-| **human** — 不可自动恢复 | TOOL_PANIC, DISK_READ_ERROR, WORKER_ID_CONFLICT, APPROVAL_REJECTED, BRAIN_LLM_UNAVAILABLE, BRAIN_CYCLE_DETECTED, BRAIN_CONTEXT_OVERFLOW, PROTO_VERSION_MISMATCH, AUTH_FAILED, AUTH_TOKEN_MISSING |
-| **非错误** — 仅信息标记 | OUTPUT_TOO_LARGE (truncated), BROADCAST_PARTIAL_FAILURE, PARAM_TOO_LONG (truncated) |
+### TOOL_DEPLOY_FAILED
+- **含义**: 工具部署到 Worker 失败（编译/语法检查未通过）
+- **模块**: Worker / dynamic/compiler
+- **处理策略**: `replan` — Brain 调整代码后重试
+
+### TOOL_COMPILE_ERROR
+- **含义**: 工具代码语法检查失败
+- **模块**: Worker / dynamic/compiler
+- **处理策略**: `replan` — Brain 修复代码后重试
+
+### TOOL_SANDBOX_VIOLATION
+- **含义**: 工具执行时触发了沙箱限制
+- **模块**: Worker / dynamic/sandbox
+- **处理策略**: `human` — 代码可能包含恶意行为，需人工审查
+
+### TOOL_MEMORY_LIMIT
+- **含义**: 动态工具超出内存限制
+- **模块**: Worker / dynamic/sandbox
+- **处理策略**: `replan` — Brain 优化代码
+
+### TOOL_RUNTIME_UNAVAILABLE
+- **含义**: Worker 没有所需的

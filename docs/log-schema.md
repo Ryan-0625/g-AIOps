@@ -35,6 +35,9 @@
 | `data` | 否 | 结构化数据，不嵌入大文本 |
 | `duration_ms` | 否 | 有耗时度量的操作必填 |
 | `pid` | 是 | 进程 ID，用于区分多实例 |
+| `deploy_id` | 否 | v2.0 动态工具部署追踪 ID |
+| `tool_lifecycle` | 否 | v2.0 工具生命周期事件（deploy/undeploy/compile/error） |
+| `memory_op` | 否 | v2.0 记忆模块操作（store/retrieve/summarize） |
 
 ## 分层实现
 
@@ -107,13 +110,3 @@ class JSONFormatter(logging.Formatter):
 
 #!/bin/bash
 TRACE_ID=$1
-if [ -z "$TRACE_ID" ]; then
-    echo "Usage: $0 <trace_id>"
-    exit 1
-fi
-
-# 搜索各层日志文件（路径由 dev-up.sh 创建）
-for log in /tmp/gaiops/logs/*.log; do
-    grep "$TRACE_ID" "$log" 2>/dev/null
-done | sort
-```
