@@ -176,4 +176,67 @@ export function validateEnvelope(e: Envelope): ValidationError[] {
   const add = (field: string, msg: string) => errs.push({ field, message: msg });
 
   if (!VERSION_RE.test(e.proto_version)) add("proto_version", "must match semver (e.g. 1.1)");
-  if (!UUID_RE.test(e.trace_id)) add(
+  if (!UUID_RE.test(e.trace_id)) add("trace_id", "must be a valid UUID");
+  if (!UUID_RE.test(e.msg_id)) add("msg_id", "must be a valid UUID");
+
+  const validTypes: MsgType[] = [
+    "request", "response", "event", "ack", "heartbeat",
+    "tool_deploy", "tool_code", "tool_status",
+  ];
+  if (!validTypes.includes(e.msg_type)) add("msg_type", `invalid: ${e.msg_type}`);
+
+  // v1.0 backward compat: v1.0 nodes see new msg_type and report warning but don't crash
+  const v1Types: MsgType[] = ["request", "response", "event", "ack", "heartbeat"];
+  if (!v1Types.includes(e.msg_type) && e.proto_version === "1.0") {
+    add("msg_type", `v1.0 does not support ${e.msg_type}; upgrade to v1.1`);
+  }
+
+  const validRoles: Role[] = ["brain", "master", "worker", "broadcast"];
+  if (!validRoles.includes(e.source)) add("source", `invalid: ${e.source}`);
+  if (e.target !== "broadcast" && !validRoles.includes(e.target)) add("target", `invalid: ${e.target}`);
+
+  if (e.correlation_id && !UUID_RE.test(e.correlation_id)) add("correlation_id", "must be valid UUID or empty");
+  if (e.priority !== undefined && ![0, 1, 2].includes(e.priority)) add("priority", "must be 0, 1, or 2");
+  if (e.ttl_seconds !== undefined && (e.ttl_seconds < 1 || e.ttl_seconds > 300))
+    add("ttl_seconds", "must be 1–300");
+  if (e.timestamp < 1_000_000_000) add("timestamp", "looks invalid");
+
+  // v1.1 fields validation
+  if (e.msg_type === "tool_deploy" || e.msg_type === "tool_code") {
+    if (!e.code_body) add("code_body", "required for tool_deploy/tool_code messages");
+    if (!e.deploy_id) add("deploy_id", "required for tool_deploy/tool_code messages");
+  }
+  if (e.msg_type === "tool_deploy" && !e.runtime_hints?.interpreter) {
+    add("runtime_hints.interpreter", "required for tool_deploy messages");
+  }
+  if (e.deploy_id && !UUID_RE.test(e.deploy_id)) add("deploy_id", "must be a valid UUID");
+
+  // Payload
+  const { payload } = e;
+  if (!payload.action) add("payload.action", "is required");
+  else if (!ACTION_RE.test(payload.action)) add("payload.action", "must be namespace.format (e.g. ping.icmp)");
+
+  const validStatuses: Status[] = ["success", "failure", "pending", "cancelled"];
+  if (!validStatuses.includes(payload.status)) add("payload.status", `invalid: ${payload.status}`);
+  if (payload.status === "failure" && !payload.error) add("payload.error", "is required when status=failure");
+  if (payload.truncated && (payload.truncated_at === undefined || payload.truncated_at <= 0))
+    add("payload.truncated_at", "must be >0 when truncated=true");
+
+  return errs;
+}
+
+// ── Serialization ─────────────────────────────────────────────────────
+
+export function marshal(e: Envelope): string {
+  return JSON.stringify(e);
+}
+
+export function unmarshal(data: string): Envelope {
+  return JSON.parse(data) as Envelope;
+}
+
+export function mustMarshal(e: Envelope): string {
+  const errs = validateEnvelope(e);
+  if (errs.length > 0) throw new Error(`Envelope validation failed: ${JSON.stringify(errs)}`);
+  return marshal(e);
+}

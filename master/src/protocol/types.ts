@@ -34,4 +34,33 @@ export interface RuntimeHints {
 }
 
 export interface Payload {
-  action: stri
+  action: string;
+  params?: Record<string, unknown>;
+  status: Status;
+  data?: Record<string, unknown>;
+  truncated?: boolean;
+  truncated_at?: number;
+  progress?: Progress;
+  error?: ErrorInfo;
+}
+
+export interface Envelope {
+  proto_version: string;
+  trace_id: string;
+  msg_id: string;
+  msg_type: MsgType;
+  timestamp: number;
+  source: Role;
+  source_id?: string;
+  target: Role;
+  target_id?: string;
+  correlation_id?: string;
+  priority?: Priority;
+  ttl_seconds?: number;
+  payload: Payload;
+
+  // v1.1 fields (optional — backward compatible)
+  code_body?: string;
+  deploy_id?: string;
+  runtime_hints?: RuntimeHints;
+}

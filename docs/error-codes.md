@@ -266,4 +266,32 @@
 - **处理策略**: `replan` — Brain 优化代码
 
 ### TOOL_RUNTIME_UNAVAILABLE
-- **含义**: Worker 没有所需的
+- **含义**: Worker 没有所需的解释器运行时
+- **模块**: Worker / dynamic/runtime
+- **处理策略**: `replan` — Brain 选择 Worker 支持的解释器
+
+### TOOL_DEPLOY_TIMEOUT
+- **含义**: 工具部署超时（代码传输或编译超时）
+- **模块**: Master / tool-deployer
+- **处理策略**: `retry` — 重试部署
+
+### BRAIN_CODE_GEN_FAILED
+- **含义**: Brain 代码生成器无法生成有效工具代码
+- **模块**: Brain / agents/code_generator
+- **处理策略**: `human` — 需要人工编写工具代码
+
+### MEMORY_RETRIEVAL_FAILED
+- **含义**: 记忆模块检索失败（向量库不可达）
+- **模块**: Brain / memory
+- **处理策略**: 非错误 — 降级为无记忆模式
+
+---
+
+## 各层错误分类速查
+
+| Brain 策略 | 错误码 |
+|-----------|--------|
+| **retry** — 可重试，不修改参数 | EXECUTION_TIMEOUT, CONNECTION_RESET, WORKER_OFFLINE, TTL_EXPIRED, NO_AVAILABLE_WORKER, SHUTTING_DOWN, WORKER_OVERLOAD, MASTER_OVERLOAD, BRAIN_STREAM_ERROR, TOOL_DEPLOY_TIMEOUT |
+| **replan** — 需调整方案后重试 | INVALID_ARGS, COMMAND_NOT_ALLOWED, PATH_NOT_ALLOWED, SERVICE_NOT_FOUND, SERVICE_ALREADY_RUNNING, PING_FAILED, PROCESS_NOT_FOUND, APPROVAL_TIMEOUT, UNKNOWN_TOOL, PARAM_MISSING, PARAM_SANITIZED, MISSING_TRACE_ID, MISSING_ACTION, INVALID_ENVELOPE, TOOL_DEPLOY_FAILED, TOOL_COMPILE_ERROR, TOOL_MEMORY_LIMIT, TOOL_RUNTIME_UNAVAILABLE, PARAM_TOO_LONG |
+| **human** — 不可自动恢复 | TOOL_PANIC, DISK_READ_ERROR, WORKER_ID_CONFLICT, APPROVAL_REJECTED, BRAIN_LLM_UNAVAILABLE, BRAIN_CYCLE_DETECTED, BRAIN_CONTEXT_OVERFLOW, PROTO_VERSION_MISMATCH, AUTH_FAILED, AUTH_TOKEN_MISSING, TOOL_SANDBOX_VIOLATION, BRAIN_CODE_GEN_FAILED, MEMORY_RETRIEVAL_FAILED |
+| **非错误** — 仅信息标记 | OUTPUT_TOO_LARGE (truncated), BROADCAST_PARTIAL_FAILURE, PARAM_TOO_LONG (truncated) |

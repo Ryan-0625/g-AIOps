@@ -226,4 +226,19 @@ TRACEROUTE = tool_to_ollama_schema(
 )
 
 SSL_CERT_CHECK = tool_to_ollama_schema(
-   
+    "ssl.cert_check",
+    "Check SSL/TLS certificate details for a hostname: expiry, issuer, SANs, TLS version.",
+    {
+        "hostname": {"type": "string", "description": "Hostname to check", "required": True},
+        "port": {"type": "integer", "description": "Port (default 443)"},
+    },
+)
+
+ALL_TOOLS = [PING_ICMP, DISK_USAGE, SERVICE_STATUS, SERVICE_RESTART,
+             HTTP_GET, HTTP_POST, DNS_LOOKUP, SYSTEM_INFO,
+             FILE_READ, FILE_WRITE, NETWORK_CONNECTIONS, CONTAINER_LIST,
+             TOOL_CREATE, TOOL_DELETE,
+             CPU_USAGE, MEMORY_USAGE, SERVICE_START,
+             FILE_LIST, CONTAINER_LOGS,
+             TRACEROUTE, SSL_CERT_CHECK]
+TOOL_NAMES = [t["function"]["name"] for t in ALL_TOOLS]

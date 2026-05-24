@@ -323,4 +323,89 @@ func (c *Client) handleToolDeploy(ctx context.Context, env *envelope.Envelope) {
 
 	// Determine risk level from params.
 	riskLevel := "readonly"
-	if rl, ok := env.Payload.Par
+	if rl, ok := env.Payload.Params["risk_level"].(string); ok {
+		riskLevel = rl
+	}
+
+	// Determine timeout.
+	timeoutSec := 30
+	if t, ok := env.Payload.Params["timeout"].(float64); ok {
+		timeoutSec = int(t)
+	}
+
+	// If this is a chunked transfer, we may need to reassemble.
+	// For now, we rely on the Master sending the complete code_body
+	// (Master handles chunking/ reassembly transparently).
+
+	result := c.dynamic.Deploy(action, code, lang, riskLevel, timeoutSec)
+
+	// Send deployment status back to Master.
+	status := envelope.StatusSuccess
+	errInfo := (*envelope.ErrorInfo)(nil)
+	if result.Status != "success" {
+		status = envelope.StatusFailure
+		errInfo = &envelope.ErrorInfo{
+			Code:    result.Error.Code,
+			Message: result.Error.Message,
+		}
+	}
+
+	resp := &envelope.Envelope{
+		ProtoVersion: "1.1",
+		MsgID:        fmt.Sprintf("deploy-status-%d", time.Now().UnixNano()),
+		MsgType:      envelope.MsgToolStatus,
+		Timestamp:    time.Now().Unix(),
+		Source:       envelope.RoleWorker,
+		SourceID:     c.config.WorkerID,
+		Target:       envelope.RoleMaster,
+		DeployID:     deployID,
+		Payload: envelope.Payload{
+			Action: action,
+			Status: status,
+			Error:  errInfo,
+		},
+	}
+	c.send(resp)
+}
+
+// SendEnvelope marshals and delivers an envelope to Master.
+// Thread-safe; safe to call from the Reporter's background goroutine.
+func (c *Client) SendEnvelope(env *envelope.Envelope) {
+	c.send(env)
+}
+
+// ReAdvertise re-announces capabilities to Master, picking up any
+// dynamically registered tools from the global registry.
+func (c *Client) ReAdvertise() {
+	c.SendCapabilityAdvertise(
+		registry.Global.Actions(),
+		registry.Global.RiskLevels(),
+		c.config.MaxConcurrent,
+		c.config.WorkerVersion,
+	)
+}
+
+// SendCapabilityAdvertise announces supported actions to Master.
+func (c *Client) SendCapabilityAdvertise(actions []string, riskLevels map[string]string, maxConcurrent int, version string) {
+	env := &envelope.Envelope{
+		ProtoVersion: "1.0",
+		MsgID:        fmt.Sprintf("cap-%d", time.Now().UnixNano()),
+		MsgType:      envelope.MsgEvent,
+		Timestamp:    time.Now().Unix(),
+		Source:       envelope.RoleWorker,
+		SourceID:     c.config.WorkerID,
+		Target:       envelope.RoleMaster,
+		Payload: envelope.Payload{
+			Action: "capability.advertise",
+			Status: envelope.StatusSuccess,
+			Params: map[string]interface{}{
+				"actions":            actions,
+				"risk_levels":        riskLevels,
+				"max_concurrent":     maxConcurrent,
+				"worker_version":     version,
+				"heartbeat_interval": c.config.HeartbeatInterval,
+			},
+		},
+	}
+	c.send(env)
+}

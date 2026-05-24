@@ -1,26 +1,44 @@
-"""LangGraph state graph topology for the Brain execution loop.
+"""LangGraph state graph topology for the Brain execution loop — v2.0 Triple Loop.
 
 Flow:
-  Analyst → Planner → [Execute → Reflector]×N → done
-                         ↑         │
-                         └─ replan ─┘
+  Analyst → Memory Load → [Plan (outer loop)
+                              ↓
+                           ReAct (middle loop: Thought→Action→Observation)
+                              ↓
+                           Reflect (inner loop: evaluate → continue/replan/backtrack)
+                           ] × N → done
+
+Memory Integration:
+  - Episodic: past execution patterns (action + error_code similarity)
+  - Semantic: knowledge base (known fixes, best practices)
+  - Working: current session context (trajectory buffer, variables)
+
+Auto-Deploy Integration:
+  - When NO_AVAILABLE_WORKER → try Deployer templates first
+  - If no template → CodeGenerator generates code → Deployer deploys → retry
 """
 
 import asyncio
 import json
 import random
 import time
-from typing import Any
+from typing import Any, Optional
 
 from core.state import GraphState
 from agents.analyst import analyst_node
 from agents.planner import planner_node
 from agents.reflector import reflector_node
+from agents.reactor import ReActEngine
 from agents.deployer import Deployer
+from agents.code_generator import CodeGenerator, CodeGenerationError
 from llm.adapter import LLMAdapter
 from llm.schemas import ALL_TOOLS, _llm_name, _action_name
 from llm.context_window import compress_messages
 from tools.master_client import MasterClient
+from memory.episodic import EpisodicMemory, Episode
+from memory.semantic import SemanticMemory, KnowledgeEntry
+from memory.working import WorkingMemory
+from memory.summarizer import MemorySummarizer
 from logger.structured_logger import get_logger
 from logger.trace_context import generate_trace_id, set_trace_id
 
@@ -55,14 +73,15 @@ def _build_tool_descriptions() -> str:
 
 
 class GraphEngine:
-    """LangGraph execution engine.
+    """LangGraph execution engine — v2.0 Triple Loop.
+
+    Flow hierarchy:
+      Outer (Plan): Define/refine plan, track overall progress
+      Middle (ReAct): Thought→Action→Observation loop per step
+      Inner (Reflect): Evaluate results, memory storage, cycle detection
 
     Each trace_id runs as an independent asyncio task.
     Sessions are isolated — no shared mutable state.
-
-    Supports degraded read-only mode: when the LLM is unavailable or slow,
-    the engine skips inference and returns existing results rather than
-    escalating to human intervention.
     """
 
     def __init__(self, llm: LLMAdapter, master: MasterClient, read_only: bool = False,
@@ -74,13 +93,20 @@ class GraphEngine:
         self.metrics = metrics
         self.degraded = False
         self.deployer = Deployer(master)
+        self.code_generator = CodeGenerator(llm)
+        self.react_engine = ReActEngine(llm)
+
+        # Memory systems
+        self.episodic_memory = EpisodicMemory()
+        self.semantic_memory = SemanticMemory()
+        self.memory_summarizer = MemorySummarizer()
+
         self.active_sessions: dict[str, asyncio.Task] = {}
         self.completed_sessions: dict[str, dict] = {}
         self._tool_descriptions = _build_tool_descriptions()
 
     @property
     def is_degraded(self) -> bool:
-        """True when engine is operating in degraded read-only mode."""
         return self.degraded
 
     async def start_session(self, context: str) -> str:
@@ -93,21 +119,23 @@ class GraphEngine:
         return trace_id
 
     async def _run_graph(self, state: GraphState, context: str) -> None:
-        """Independent graph execution loop for one session."""
+        """Independent graph execution loop — v2.0 Triple Loop."""
         set_trace_id(state.trace_id)
         try:
-            # Phase 1: Analyst — understand the context.
+            # ═══ Phase 0: Analyst — understand the context ═══
             state = await analyst_node(state, context, self.llm)
 
-            # Main execution loop.
+            # ═══ Phase 1: Memory Load — load relevant memories ═══
+            state = await self._load_memories(state, context)
+
+            # ═══ Phase 2: Main Triple Loop ═══
             while True:
-                # Call LLM → Planner.
+                # ── Outer Loop: Plan ──
                 llm_response = await self._call_llm(state, context)
                 if llm_response is None:
                     if self.read_only:
                         self.degraded = True
-                        state.conclusion = "LLM unavailable — read-only mode. Returning current results."
-                        logger.warning("Degraded to read-only mode", extra={"data": {"trace_id": state.trace_id}})
+                        state.conclusion = "LLM unavailable — read-only mode."
                         break
                     state.needs_human = True
                     state.conclusion = "LLM unavailable after retries. Escalating to human."
@@ -117,119 +145,69 @@ class GraphEngine:
                 if not state.plan:
                     if not state.needs_human:
                         state.needs_human = True
-                        state.conclusion = "Planner could not create a valid plan. Escalating to human."
+                        state.conclusion = "Planner could not create a valid plan."
                     break
 
-                # Phase 3 & 4: Execute each step → Reflector evaluates.
+                # Execute each plan step through ReAct + Reflect
                 while state.current_step < len(state.plan) and not state.needs_human:
                     step = state.plan[state.current_step]
                     state.last_action = step["action"]
 
-                    result = await self.master.execute(
-                        action=step["action"],
-                        params=step.get("params", {}),
-                        trace_id=state.trace_id,
-                        target_worker_id=step.get("target_worker_id"),
+                    # ── Middle Loop: ReAct (Thought→Action→Observation) ──
+                    react_result = await self.react_engine.execute_react_loop(
+                        state=state,
+                        step=step,
+                        context=context,
+                        tool_descriptions=self._tool_descriptions,
                     )
 
-                    state.last_status = result.get("status", "failure")
-                    state.last_data = result.get("data", {})
+                    # Store trajectory
+                    if react_result.get("trajectory"):
+                        for traj_step in react_result["trajectory"]:
+                            # Store to working memory via state
+                            state.react_trajectory.append(traj_step)
 
-                    error = result.get("error", {})
-                    state.last_error = error.get("code", "") if error else ""
+                    # ── Handle deploy signal from ReAct ──
+                    if react_result.get("status") == "needs_deploy":
+                        deploy_success = await self._auto_deploy_tool(state, step)
+                        if deploy_success:
+                            # Retry execution after deployment
+                            state.add_summary(f"Deployed missing tool: {step['action']}")
+                            continue  # Go back to ReAct
+                        else:
+                            state.last_status = "failure"
+                            state.last_error = "TOOL_DEPLOY_FAILED"
+                    else:
+                        state.last_status = react_result.get("status", "failure")
+                        state.last_data = react_result.get("data", {})
 
-                    # ── Dynamic deployment: try to deploy missing tool ──
-                    if state.last_status == "failure" and state.last_error == "NO_AVAILABLE_WORKER":
-                        action_name = step["action"]
-                        if self.deployer.has_template(action_name):
-                            logger.info("Deploying missing tool", extra={
-                                "data": {"action": action_name, "trace_id": state.trace_id},
-                            })
-                            deployed = await self.deployer.deploy(
-                                action=action_name,
-                                trace_id=state.trace_id,
-                            )
-                            if deployed:
-                                # Give worker time to re-advertise capabilities.
-                                await asyncio.sleep(2)
-                                # Retry execution.
-                                result = await self.master.execute(
-                                    action=step["action"],
-                                    params=step.get("params", {}),
-                                    trace_id=state.trace_id,
-                                )
-                                state.last_status = result.get("status", "failure")
-                                state.last_data = result.get("data", {})
-                                error = result.get("error", {})
-                                state.last_error = error.get("code", "") if error else ""
-
-                                if state.last_status == "success":
-                                    logger.info("Tool deployed and executed", extra={
-                                        "data": {"action": action_name, "trace_id": state.trace_id},
-                                    })
-
-                    if result.get("truncated"):
+                    # Handle truncation notice
+                    if state.last_data and state.last_data.get("_truncated"):
                         state.truncated_responses.append(True)
-                        state.last_data["_truncation_notice"] = (
-                            f"[Response truncated, original size: {result.get('truncated_at', 0)} bytes]"
-                        )
 
+                    # ── Inner Loop: Reflect ──
                     state = await reflector_node(state)
+
+                    # Store to episodic memory
+                    await self._store_episodic(state, step, context)
 
                     if state.needs_human or state.cycle_detected:
                         break
 
-                    # Deployed tools persist on Worker for future sessions.
-
                 if state.needs_human or state.cycle_detected:
                     break
 
-                # Replan: reflector cleared the plan → go back to Planner.
+                # Replan or done
                 if not state.plan:
                     state.current_step = 0
                     continue
 
-                # Plan completed.
                 if state.is_done():
-                    if not state.conclusion:
-                        # Check if there were failures in summaries
-                        has_failures = any("FAIL:" in s for s in state.summaries)
-                        if has_failures:
-                            # Extract the last failed action for a helpful message
-                            failed_action = state.last_action or ""
-                            if failed_action:
-                                state.conclusion = (
-                                    f"Operation failed: {failed_action} could not be "
-                                    f"executed on any available worker."
-                                )
-                            else:
-                                state.conclusion = (
-                                    "Operation partially completed with errors."
-                                )
-                        else:
-                            state.conclusion = "Plan executed."
-                        state.add_summary(state.conclusion)
+                    self._finalize_conclusion(state)
                     break
 
-            # Ensure a conclusion always exists with meaningful text.
-            if not state.conclusion:
-                if state.needs_human:
-                    has_failures = any("FAIL:" in s for s in state.summaries)
-                    if has_failures and state.last_action:
-                        state.conclusion = (
-                            f"Unable to complete: {state.last_action} failed. "
-                            f"Human intervention may be required."
-                        )
-                    else:
-                        state.conclusion = "Session ended — needs human intervention."
-                elif state.cycle_detected:
-                    state.conclusion = "Session ended — cycle detected."
-                else:
-                    has_failures = any("FAIL:" in s for s in state.summaries)
-                    if has_failures:
-                        state.conclusion = "Operation completed with errors."
-                    else:
-                        state.conclusion = "Session ended."
+            # Ensure conclusion always exists
+            self._ensure_conclusion(state)
 
             logger.info("Session ended", extra={
                 "data": {
@@ -237,6 +215,7 @@ class GraphEngine:
                     "status": "needs_human" if state.needs_human else "completed",
                     "conclusion": state.conclusion,
                     "steps": len(state.summaries),
+                    "react_trajectory": len(state.react_trajectory),
                 }
             })
 
@@ -248,35 +227,155 @@ class GraphEngine:
             state.needs_human = True
             state.conclusion = f"Brain session failed: {e}"
         finally:
-            # Deployed tools persist on Worker for future sessions.
-            logger.info("Deployed tools left in place", extra={
-                "data": {"trace_id": state.trace_id, "deployed": list(self.deployer._deployed)},
-            })
-
-            # Store result for chat API retrieval.
-            self.completed_sessions[state.trace_id] = {
-                "trace_id": state.trace_id,
-                "conclusion": state.conclusion,
-                "summaries": list(state.summaries),
-                "needs_human": state.needs_human,
-                "cycle_detected": state.cycle_detected,
-                "last_action": state.last_action,
-                "last_status": state.last_status,
-                "last_data": state.last_data,
-                "truncated": len(state.truncated_responses) > 0,
-            }
+            self.completed_sessions[state.trace_id] = state.to_dict()
             self.active_sessions.pop(state.trace_id, None)
 
+    # ── Memory Integration ────────────────────────────────────────────────
+
+    async def _load_memories(self, state: GraphState, context: str) -> GraphState:
+        """Load relevant episodic and semantic memories into state."""
+        try:
+            # Episodic: find similar past executions
+            similar = await self.episodic_memory.retrieve_similar(
+                action=state.last_action or "",
+                error_code=state.last_error or None,
+                top_k=3,
+            )
+            state.relevant_episodes = similar
+
+            # Semantic: find knowledge for current context
+            knowledge = await self.semantic_memory.query(
+                action=state.last_action or "",
+                error_code=state.last_error or None,
+                context=context,
+            )
+            state.semantic_knowledge = knowledge
+
+            # Build memory context string
+            memory_ctx = self.memory_summarizer.build_memory_prompt(
+                episodic=similar,
+                semantic=knowledge,
+                working=None,  # Will be populated during ReAct
+            )
+            state.memory_context = memory_ctx
+
+        except Exception as e:
+            logger.warning(f"Memory load failed (non-critical): {e}")
+            state.memory_context = ""
+
+        return state
+
+    async def _store_episodic(self, state: GraphState, step: dict, context: str) -> None:
+        """Store execution result to episodic memory."""
+        try:
+            episode = Episode(
+                trace_id=state.trace_id,
+                context_hash=hash(context[:500]) & 0xFFFFFFFF,
+                action=step.get("action", "unknown"),
+                params=step.get("params", {}),
+                status=state.last_status or "failure",
+                error_code=state.last_error or None,
+                error_message=state.last_error or None,
+                summary=state.summaries[-1] if state.summaries else "",
+                duration_ms=0,
+                timestamp=int(time.time()),
+                react_steps=len(state.react_trajectory),
+            )
+            await self.episodic_memory.store(episode)
+        except Exception as e:
+            logger.warning(f"Episodic store failed: {e}")
+
+    # ── Auto-Deploy Integration ───────────────────────────────────────────
+
+    async def _auto_deploy_tool(self, state: GraphState, step: dict) -> bool:
+        """Try to deploy a missing tool — via template or code generation."""
+        action_name = step.get("action", "")
+
+        # Strategy 1: Deployer templates
+        if self.deployer.has_template(action_name):
+            logger.info("Deploying from template", extra={
+                "data": {"action": action_name, "trace_id": state.trace_id},
+            })
+            deployed = await self.deployer.deploy(
+                action=action_name,
+                trace_id=state.trace_id,
+            )
+            if deployed:
+                await asyncio.sleep(2)
+                return True
+
+        # Strategy 2: LLM Code Generation (v2.0)
+        if self.llm and not self.degraded:
+            task_description = f"Create a tool that performs: {action_name.replace('.', ' ')}"
+            if step.get("params"):
+                task_description += f" with parameters: {json.dumps(step['params'])[:200]}"
+
+            logger.info("Generating tool code via LLM", extra={
+                "data": {"action": action_name, "trace_id": state.trace_id},
+            })
+
+            try:
+                generated = await self.code_generator.generate(
+                    task=task_description,
+                    language="bash",
+                    timeout=30,
+                )
+                logger.info(f"Code generated for {action_name}", extra={
+                    "data": {"risk_level": generated.risk_level, "trace_id": state.trace_id},
+                })
+
+                # Deploy via Master's tool-deploy API
+                deploy_result = await self.master.execute(
+                    action="tool.create",
+                    params={
+                        "name": generated.action,
+                        "script": generated.code,
+                        "interpreter": generated.language,
+                        "description": generated.description,
+                        "risk_level": generated.risk_level,
+                        "timeout": generated.timeout,
+                    },
+                    trace_id=state.trace_id,
+                )
+
+                if deploy_result.get("status") == "success":
+                    await asyncio.sleep(2)
+                    state.add_summary(f"Auto-deployed tool: {generated.action}")
+                    state.deployed_tools.add(generated.action)
+                    return True
+                else:
+                    logger.warning("Deploy failed after code gen", extra={
+                        "data": {"action": action_name, "error": deploy_result},
+                    })
+            except CodeGenerationError as e:
+                logger.warning(f"Code generation failed for {action_name}: {e}")
+            except Exception as e:
+                logger.warning(f"Auto-deploy failed for {action_name}: {e}")
+
+        return False
+
+    # ── LLM Call with Memory Enhancement ─────────────────────────────────
+
     async def _call_llm(self, state: GraphState, context: str) -> str | None:
-        """Call the LLM for planning. Returns raw response string or None on failure."""
-        # If already degraded, skip LLM call entirely.
+        """Call the LLM with memory-enhanced context."""
         if self.degraded:
-            logger.info("Skipping LLM call — engine in degraded mode", extra={"data": {"trace_id": state.trace_id}})
             return None
 
         system_content = SYSTEM_PROMPT.format(tool_descriptions=self._tool_descriptions)
 
-        # Append available Worker context for target_worker_id routing.
+        # Append memory context if available
+        if state.memory_context:
+            system_content += f"\n\n{state.memory_context}"
+
+        # Append ReAct trajectory if available
+        if state.react_trajectory:
+            traj_summary = self.memory_summarizer.summarize_trajectory(
+                state.react_trajectory[-3:]
+            )
+            if traj_summary:
+                system_content += f"\n\nRecent trajectory: {traj_summary}"
+
+        # Append available Worker context
         try:
             workers = await self.master.list_workers()
             if workers:
@@ -285,17 +384,15 @@ class GraphEngine:
                     actions = ", ".join(w.get("actions", [])[:8])
                     wl = w.get("current_load", 0)
                     mc = w.get("max_concurrent", 1)
-                    worker_lines.append(
-                        f"  - {w['worker_id']}: [{wl}/{mc} load] {actions}"
-                    )
+                    worker_lines.append(f"  - {w['worker_id']}: [{wl}/{mc} load] {actions}")
                 worker_lines.append(
-                    'Use "target_worker_id" to direct a tool to a specific worker. '
-                    "If not specified, Master routes to the least-loaded worker."
+                    'Use "target_worker_id" to direct a tool to a specific worker.'
                 )
                 system_content += "\n" + "\n".join(worker_lines)
         except Exception:
-            pass  # Worker list is advisory; proceed without it.
+            pass
 
+        # Build prompt
         if state.summaries:
             history = "\n".join(state.summaries[-5:])
             if state.last_error:
@@ -303,7 +400,7 @@ class GraphEngine:
                     f"Original request: {context}\n\n"
                     f"Previous steps:\n{history}\n\n"
                     f"The last action [{state.last_action}] failed with error: {state.last_error}\n"
-                    "Determine the next action. Create a revised tool call."
+                    "Determine the next action."
                 )
             else:
                 prompt = (
@@ -314,19 +411,16 @@ class GraphEngine:
         else:
             prompt = (
                 f"Original request: {context}\n\n"
-                "Analyze this request and respond with a JSON tool call "
-                "in the format: {\"action\": \"tool_name\", \"params\": {...}}"
+                "Analyze this request and respond with a JSON tool call."
             )
 
         messages = [
             {"role": "system", "content": system_content},
             {"role": "user", "content": prompt},
         ]
-
-        # Compress if needed.
         messages = compress_messages(messages, state.summaries)
 
-        # Retry loop with exponential backoff for transient failures.
+        # Retry loop
         last_error: str | None = None
         for attempt in range(self.llm_max_retries + 1):
             if self.metrics:
@@ -335,20 +429,15 @@ class GraphEngine:
                 t0 = time.monotonic()
                 response = await self.llm.chat(messages=messages, tools=ALL_TOOLS, timeout=30.0)
                 elapsed = time.monotonic() - t0
-                # Auto-degrade if LLM response is consistently slow (>20s).
                 if self.read_only and elapsed > 20.0:
                     self.degraded = True
-                    logger.warning("LLM response slow — degrading to read-only mode", extra={
-                        "data": {"trace_id": state.trace_id, "elapsed_seconds": round(elapsed, 1)},
-                    })
+                    return None
                 if isinstance(response, dict):
                     message = response.get("message", {})
-                    # Ollama tool_calls format.
                     tool_calls = message.get("tool_calls", [])
                     if tool_calls:
                         fn = tool_calls[0].get("function", {})
                         raw_params = fn.get("arguments", {})
-                        # Tool call arguments are JSON strings per API spec.
                         if isinstance(raw_params, str):
                             try:
                                 raw_params = json.loads(raw_params)
@@ -358,49 +447,58 @@ class GraphEngine:
                             "action": _action_name(fn.get("name", "")),
                             "params": raw_params,
                         })
-                    # Plain text response.
                     content = message.get("content", "")
                     if content.strip():
                         return content
                 return str(response) if response else None
-
             except (asyncio.TimeoutError, ConnectionError, json.JSONDecodeError) as e:
                 last_error = str(e)
-                logger.warning("LLM call attempt %d/%d failed (retryable): %s",
-                               attempt + 1, self.llm_max_retries + 1, last_error,
-                               extra={"data": {"trace_id": state.trace_id}})
                 if attempt < self.llm_max_retries:
-                    delay = min(1.0 * (2 ** attempt), 15.0)  # cap at 15s
-                    jitter = random.uniform(0.75, 1.25)
-                    await asyncio.sleep(delay * jitter)
-
+                    delay = min(1.0 * (2 ** attempt), 15.0)
+                    await asyncio.sleep(delay * random.uniform(0.75, 1.25))
             except Exception as e:
-                # Non-retryable or unknown error — log and give up immediately.
                 last_error = str(e)
                 if self.metrics:
                     self.metrics.llm_errors_total += 1
-                logger.error("LLM call failed (non-retryable)", extra={
-                    "error_code": "BRAIN_LLM_UNAVAILABLE",
-                    "data": {"trace_id": state.trace_id, "error": str(e)},
-                })
                 return None
 
-        # All retries exhausted.
         if self.metrics:
             self.metrics.llm_errors_total += 1
-        logger.error("LLM call failed after %d attempts", self.llm_max_retries + 1, extra={
-            "error_code": "BRAIN_LLM_UNAVAILABLE",
-            "data": {"trace_id": state.trace_id, "last_error": last_error},
-        })
         return None
 
+    # ── Helpers ───────────────────────────────────────────────────────────
+
+    def _finalize_conclusion(self, state: GraphState) -> None:
+        """Generate conclusion when plan completes."""
+        if state.conclusion:
+            return
+        has_failures = any("FAIL:" in s for s in state.summaries)
+        if has_failures and state.last_action:
+            state.conclusion = (
+                f"Operation failed: {state.last_action} could not be "
+                f"executed on any available worker."
+            )
+        else:
+            state.conclusion = "Plan executed."
+        state.add_summary(state.conclusion)
+
+    def _ensure_conclusion(self, state: GraphState) -> None:
+        """Ensure a meaningful conclusion always exists."""
+        if state.conclusion:
+            return
+        if state.needs_human:
+            state.conclusion = "Session ended — needs human intervention."
+        elif state.cycle_detected:
+            state.conclusion = "Session ended — cycle detected."
+        else:
+            state.conclusion = "Session ended."
+
+    # ── Session Management ────────────────────────────────────────────────
+
     async def get_session_status(self, trace_id: str) -> dict[str, Any]:
-        """Check if a session is still running or completed."""
-        # Check completed first.
         if trace_id in self.completed_sessions:
             result = self.completed_sessions[trace_id]
             return {"trace_id": trace_id, "status": "completed", **result}
-
         task = self.active_sessions.get(trace_id)
         if task is None:
             return {"trace_id": trace_id, "status": "not_found"}
@@ -412,5 +510,4 @@ class GraphEngine:
         return {"trace_id": trace_id, "status": "running"}
 
     def pop_session_result(self, trace_id: str) -> dict | None:
-        """Retrieve and remove a completed session result."""
         return self.completed_sessions.pop(trace_id, None)

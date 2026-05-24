@@ -104,4 +104,8 @@ func (r *Registry) RiskLevels() map[string]string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	levels := make(map[string]string, len(r.tools))
-	
+	for name, t := range r.tools {
+		levels[name] = t.RiskLevel
+	}
+	return levels
+}

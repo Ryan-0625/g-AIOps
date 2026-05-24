@@ -256,4 +256,62 @@ export function brainApiRouter(
     tracker.track(msgId, env, route.workerId);
     wsServer.sendToWorker(route.workerId, env);
     writeAudit(env);
-    metricsCollec
+    metricsCollector?.recordRequest("success", false);
+
+    // ── Response ──
+    const response: BrainResponse = {
+      trace_id: body.trace_id,
+      msg_id: msgId,
+      status: "pending",
+      action: body.action,
+    };
+    res.json(response);
+  });
+
+  // ── v2.0: Dynamic tool management endpoints ──
+
+  if (toolDeployer) {
+    router.post("/api/v1/tools/deploy", (req: Request, res: Response) => {
+      const token = extractBearer(req.headers.authorization);
+      if (!token || !authenticate(token, clusterToken)) {
+        res.status(401).json({ status: "failure", error: { code: "AUTH_FAILED", message: "Invalid token" } });
+        return;
+      }
+      const { action, code, interpreter, riskLevel, timeout, targetWorkerId } = req.body;
+      if (!action || !code || !interpreter) {
+        res.status(400).json({ status: "failure", error: { code: "INVALID_REQUEST", message: "action, code, and interpreter are required" } });
+        return;
+      }
+      toolDeployer.deploy({ action, code, interpreter, riskLevel, timeout, targetWorkerId })
+        .then(result => res.json(result))
+        .catch(err => {
+          logger.error("Deploy failed", { data: { action, error: err.message } });
+          res.status(500).json({ status: "failure", error: { code: "DEPLOY_ERROR", message: err.message } });
+        });
+    });
+  }
+
+  if (toolRegistry) {
+    router.get("/api/v1/tools", (req: Request, res: Response) => {
+      const token = extractBearer(req.headers.authorization);
+      if (!token || !authenticate(token, clusterToken)) {
+        res.status(401).json({ status: "failure", error: { code: "AUTH_FAILED", message: "Invalid token" } });
+        return;
+      }
+      res.json({ tools: toolRegistry.listAll(), stats: toolRegistry.getStats() });
+    });
+
+    router.delete("/api/v1/tools/:action", async (req: Request, res: Response) => {
+      const token = extractBearer(req.headers.authorization);
+      if (!token || !authenticate(token, clusterToken)) {
+        res.status(401).json({ status: "failure", error: { code: "AUTH_FAILED", message: "Invalid token" } });
+        return;
+      }
+      const { action } = req.params;
+      if (toolDeployer) await toolDeployer.undeploy(action);
+      res.json({ status: "success", action });
+    });
+  }
+
+  return router;
+}

@@ -43,3 +43,28 @@ tools:
 
 # === 凭据（外部引用，不内嵌） ===
 credentials_path: "./dev-keys/"            # 指向包含 SSH 私钥、API token 的目录
+
+# === 动态工具引擎（v2.0，可选） ===
+# Worker 接收 Brain 下发的脚本代码，在沙箱中安全执行。
+# 默认禁用，启用后 Worker 可动态扩展工具集。
+dynamic_tools:
+  enabled: false                            # 启用动态工具支持
+  interpreters:                             # Worker 提供的运行时
+    bash: "/bin/bash"
+    python3: "/usr/bin/python3"
+    node: "/usr/bin/node"
+  sandbox:
+    enabled: true
+    temp_dir: "/tmp/gaiops-dynamic/"        # 代码执行临时目录
+    max_output: 1048576                     # 最大输出字节
+    max_memory_mb: 512                      # 最大内存
+    enforce_timeout: true                   # 强制超时
+  runtime_pool:
+    max_bash_procs: 5                       # bash 进程池大小
+    max_python_procs: 3                     # python 进程池大小
+    max_node_procs: 2                       # node 进程池大小
+    idle_timeout: 300                       # 空闲回收秒数
+  lifecycle:
+    max_deployed_tools: 20                  # 最大部署工具数
+    auto_cleanup_interval: 3600             # 自动清理间隔（秒）
+    persist_on_disk: false                  # 重启后是否持久化

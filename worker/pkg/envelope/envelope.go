@@ -285,4 +285,73 @@ func MustMarshal(e *Envelope) []byte {
 // --- Constructors ---
 
 // NewRequest creates a request envelope targeting a worker.
-func NewRequest(traceID, msgID, action 
+func NewRequest(traceID, msgID, action string, params map[string]interface{}, opts ...RequestOption) *Envelope {
+	e := &Envelope{
+		ProtoVersion: "1.1",
+		TraceID:      traceID,
+		MsgID:        msgID,
+		MsgType:      MsgRequest,
+		Timestamp:    now(),
+		Source:       RoleMaster,
+		Target:       RoleWorker,
+		TargetID:     "*",
+		Priority:     PriorityNormal,
+		TTLSeconds:   30,
+		Payload: Payload{
+			Action: action,
+			Params: params,
+			Status: StatusPending,
+		},
+	}
+	for _, opt := range opts {
+		opt(e)
+	}
+	return e
+}
+
+type RequestOption func(*Envelope)
+
+func WithTargetID(id string) RequestOption        { return func(e *Envelope) { e.TargetID = id } }
+func WithPriority(p Priority) RequestOption        { return func(e *Envelope) { e.Priority = p } }
+func WithTTL(ttl int) RequestOption                { return func(e *Envelope) { e.TTLSeconds = ttl } }
+func WithCorrelationID(id string) RequestOption    { return func(e *Envelope) { e.CorrelationID = id } }
+
+// NewResponse creates a response envelope correlated to a request.
+func NewResponse(req *Envelope, status Status, data map[string]interface{}, errInfo *ErrorInfo) *Envelope {
+	return &Envelope{
+		ProtoVersion:  req.ProtoVersion,
+		TraceID:       req.TraceID,
+		MsgID:         newUUID(),
+		MsgType:       MsgResponse,
+		Timestamp:     now(),
+		Source:        req.Target,
+		SourceID:      req.TargetID,
+		Target:        req.Source,
+		CorrelationID: req.MsgID,
+		Payload: Payload{
+			Action: req.Payload.Action,
+			Status: status,
+			Data:   data,
+			Error:  errInfo,
+		},
+	}
+}
+
+// --- Platform helpers (overridden in tests) ---
+
+var now = func() int64 { return timeNow() }
+var newUUID = func() string { return uuidV7() }
+
+// SetNow replaces the time source (for tests).
+func SetNow(fn func() int64) { now = fn }
+
+// SetNewUUID replaces the UUID source (for tests).
+func SetNewUUID(fn func() string) { newUUID = fn }
+
+func timeNow() int64 {
+	return time.Now().Unix()
+}
+
+func uuidV7() string {
+	return uuid.NewString()
+}

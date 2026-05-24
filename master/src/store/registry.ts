@@ -153,4 +153,23 @@ export class Registry {
    */
   getRiskLevel(action: string): string {
     if (this.workers.size === 0) return "unknown";
-    for (const w of this.
+    for (const w of this.workers.values()) {
+      if (w.caps.riskLevels[action]) return w.caps.riskLevels[action];
+    }
+    return "readonly";
+  }
+
+  // ── v2.0: Dynamic tool support ──
+
+  /** Find workers that support dynamic tool deployment (least-loaded first). */
+  findWorkersForDynamicDeploy(): WorkerNode[] {
+    const candidates: WorkerNode[] = [];
+    for (const w of this.workers.values()) {
+      if (w.caps.supportsDynamicTools && w.currentLoad < w.caps.maxConcurrent) {
+        candidates.push(w);
+      }
+    }
+    candidates.sort((a, b) => a.currentLoad / a.caps.maxConcurrent - b.currentLoad / b.caps.maxConcurrent);
+    return candidates;
+  }
+}

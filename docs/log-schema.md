@@ -110,3 +110,13 @@ class JSONFormatter(logging.Formatter):
 
 #!/bin/bash
 TRACE_ID=$1
+if [ -z "$TRACE_ID" ]; then
+    echo "Usage: $0 <trace_id>"
+    exit 1
+fi
+
+# 搜索各层日志文件（路径由 dev-up.sh 创建）
+for log in /tmp/gaiops/logs/*.log; do
+    grep "$TRACE_ID" "$log" 2>/dev/null
+done | sort
+```

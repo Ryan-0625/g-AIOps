@@ -174,4 +174,23 @@ REGISTRY: dict[str, dict[str, Any]] = {
         },
     },
     "traceroute": {
-        "description": "P
+        "description": "Perform traceroute to a target host",
+        "required_params": ["target"],
+        "risk_level": "readonly",
+        "params": {
+            "target": {"type": "string", "description": "Target hostname or IP"},
+            "max_hops": {"type": "integer", "description": "Max hops (1-30, default 15)"},
+        },
+    },
+    "ssl.cert_check": {
+        "description": "Check SSL/TLS certificate details for a hostname",
+        "required_params": ["hostname"],
+        "risk_level": "readonly",
+        "params": {
+            "hostname": {"type": "string", "description": "Hostname to check"},
+            "port": {"type": "integer", "description": "Port (default 443)"},
+        },
+    },
+}
+
+AVAILABLE_ACTIONS = list(REGISTRY.keys())

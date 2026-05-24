@@ -142,4 +142,55 @@
         },
         "truncated": {
           "type": "boolean",
-          "description": "da
+          "description": "data 或 error.raw 是否被截断。接收方应据此判断数据完整性。",
+          "default": false
+        },
+        "truncated_at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "截断前的原始字节数。仅在 truncated=true 时有效。"
+        },
+        "progress": {
+          "type": "object",
+          "description": "长时间任务进度。仅 status=pending 时有效。",
+          "properties": {
+            "percent": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100,
+              "description": "进度百分比。"
+            },
+            "message": {
+              "type": "string",
+              "maxLength": 200,
+              "description": "当前状态描述。"
+            }
+          },
+          "required": ["percent", "message"]
+        },
+        "error": {
+          "type": "object",
+          "description": "错误信息。仅 status=failure 时必填。",
+          "properties": {
+            "code": {
+              "type": "string",
+              "description": "错误码。全系统唯一，参见 docs/error-codes.md。",
+              "examples": ["EXECUTION_TIMEOUT", "TOOL_PANIC", "COMMAND_NOT_ALLOWED"]
+            },
+            "message": {
+              "type": "string",
+              "maxLength": 1000,
+              "description": "人类可读的错误描述。"
+            },
+            "raw": {
+              "type": "string",
+              "maxLength": 102400,
+              "description": "原始系统错误透传。最大 100KB，超过则截断并标记 truncated=true。禁止包装美化。"
+            }
+          },
+          "required": ["code", "message"]
+        }
+      }
+    }
+  }
+}

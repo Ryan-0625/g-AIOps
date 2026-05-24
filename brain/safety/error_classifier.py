@@ -26,4 +26,25 @@ STRATEGIES: dict[str, set[str]] = {
         "BRAIN_CYCLE_DETECTED", "BRAIN_CONTEXT_OVERFLOW",
         "PROTO_VERSION_MISMATCH", "AUTH_FAILED", "AUTH_TOKEN_MISSING",
         # v2.0: non-retryable dynamic tool errors
-        "TOOL_SANDBOX_VIOLATION", "BRAIN_CODE_GEN_FA
+        "TOOL_SANDBOX_VIOLATION", "BRAIN_CODE_GEN_FAILED",
+        "MEMORY_RETRIEVAL_FAILED",
+    },
+}
+
+NON_ERROR = {
+    "OUTPUT_TOO_LARGE", "BROADCAST_PARTIAL_FAILURE",
+}
+
+
+def classify(error_code: str) -> str:
+    """Return 'retry', 'replan', 'human', or 'non_error'."""
+    for strategy, codes in STRATEGIES.items():
+        if error_code in codes:
+            return strategy
+    if error_code in NON_ERROR:
+        return "non_error"
+    return "replan"  # Conservative default.
+
+
+def is_retryable(error_code: str) -> bool:
+    return classify(error_code) == "retry"
