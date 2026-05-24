@@ -3,7 +3,7 @@ import { Envelope } from "../../protocol/types";
 
 function makeEnv(priority: number, id: string = ""): Envelope {
   return {
-    proto_version: "1.0",
+    proto_version: "1.1",
     trace_id: "t1",
     msg_id: id || `msg-${Math.random()}`,
     msg_type: "request",
@@ -61,4 +61,5 @@ describe("PriorityQueue", () => {
     expect(q.pop()!.msg_id).toBe("b");
     expect(q.pop()!.msg_id).toBe("c");
   });
-});
+
+  i

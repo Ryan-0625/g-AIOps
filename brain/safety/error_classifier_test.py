@@ -1,5 +1,4 @@
-"""Tests for error_classifier — error code strategy classification."""
-
+"""Tests for error_classifier — error code strategy classification (v2.0 extended)."""
 from safety.error_classifier import classify, is_retryable
 
 
@@ -24,4 +23,4 @@ class TestErrorClassifier:
 
     def test_unknown_code_defaults_to_replan(self):
         assert classify("SOME_RANDOM_ERROR") == "replan"
-        assert is_retryable("SOME_RANDOM_ERROR") is False
+        assert is_retryable("SOME_RANDOM_ER

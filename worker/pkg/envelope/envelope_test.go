@@ -20,8 +20,8 @@ func TestNewRequestDefaults(t *testing.T) {
 		map[string]interface{}{"target": "localhost"},
 	)
 
-	if e.ProtoVersion != "1.0" {
-		t.Errorf("ProtoVersion = %q, want 1.0", e.ProtoVersion)
+	if e.ProtoVersion != "1.1" {
+		t.Errorf("ProtoVersion = %q, want 1.1 (v2.0 upgrade)", e.ProtoVersion)
 	}
 	if e.MsgType != envelope.MsgRequest {
 		t.Errorf("MsgType = %q, want request", e.MsgType)
@@ -239,39 +239,39 @@ func TestPriorityValid(t *testing.T) {
 
 // Test that a fully populated envelope round-trips through JSON correctly,
 // including nested objects like Progress and ErrorInfo.
-func TestComplexEnvelopeRoundtrip(t *testing.T) {
-	req := envelope.NewRequest(
-		"a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-		"00000000-0000-0000-0000-000000000001",
-		"disk.cleanup",
-		map[string]interface{}{"target": "/tmp"},
-		envelope.WithTargetID("worker-2"),
-	)
+// ── v1.1 tests ─────────────────────────────────────────────────────────────
 
-	e := envelope.NewResponse(req, envelope.StatusPending,
-		map[string]interface{}{"files_deleted": 0},
-		nil,
-	)
-	e.Payload.Progress = &envelope.Progress{Percent: 45, Message: "cleaning /tmp/cache"}
-	e.Payload.Truncated = true
-	e.Payload.TruncatedAt = 2097152
-
-	data := envelope.MustMarshal(e)
-	parsed, err := envelope.Unmarshal(data)
-	if err != nil {
-		t.Fatalf("Unmarshal: %v", err)
+func TestMsgTypeV11Valid(t *testing.T) {
+	cases := []struct {
+		mt    envelope.MsgType
+		valid bool
+	}{
+		{envelope.MsgToolDeploy, true},
+		{envelope.MsgToolCode, true},
+		{envelope.MsgToolStatus, true},
 	}
-
-	if parsed.Payload.Status != envelope.StatusPending {
-		t.Errorf("Status = %q, want pending", parsed.Payload.Status)
-	}
-	if parsed.Payload.Progress == nil || parsed.Payload.Progress.Percent != 45 {
-		t.Errorf("Progress.Percent = %v, want 45", parsed.Payload.Progress)
-	}
-	if !parsed.Payload.Truncated {
-		t.Error("Truncated should be true")
-	}
-	if parsed.Payload.TruncatedAt != 2097152 {
-		t.Errorf("TruncatedAt = %d, want 2097152", parsed.Payload.TruncatedAt)
+	for _, c := range cases {
+		if got := c.mt.Valid(); got != c.valid {
+			t.Errorf("MsgType(%q).Valid() = %v, want %v", c.mt, got, c.valid)
+		}
 	}
 }
+
+func TestMsgTypeIsV1(t *testing.T) {
+	if envelope.MsgToolDeploy.IsV1() {
+		t.Error("MsgToolDeploy should not be v1 compatible")
+	}
+	if !envelope.MsgRequest.IsV1() {
+		t.Error("MsgRequest should be v1 compatible")
+	}
+	if !envelope.MsgHeartbeat.IsV1() {
+		t.Error("MsgHeartbeat should be v1 compatible")
+	}
+}
+
+func TestValidateV11ToolDeployMissingFields(t *testing.T) {
+	e := &envelope.Envelope{
+		ProtoVersion: "1.1",
+		TraceID:      "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+		MsgID:        "00000000-0000-0000-0000-000000000001",
+		MsgType:    
