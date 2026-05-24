@@ -216,10 +216,14 @@ CONTAINER_LOGS = tool_to_ollama_schema(
     },
 )
 
-ALL_TOOLS = [PING_ICMP, DISK_USAGE, SERVICE_STATUS, SERVICE_RESTART,
-             HTTP_GET, HTTP_POST, DNS_LOOKUP, SYSTEM_INFO,
-             FILE_READ, FILE_WRITE, NETWORK_CONNECTIONS, CONTAINER_LIST,
-             TOOL_CREATE, TOOL_DELETE,
-             CPU_USAGE, MEMORY_USAGE, SERVICE_START,
-             FILE_LIST, CONTAINER_LOGS]
-TOOL_NAMES = [t["function"]["name"] for t in ALL_TOOLS]
+TRACEROUTE = tool_to_ollama_schema(
+    "traceroute",
+    "Traceroute to a target host showing the network path and latency per hop.",
+    {
+        "target": {"type": "string", "description": "Target hostname or IP address", "required": True},
+        "max_hops": {"type": "integer", "description": "Maximum hops (1-30, default 15)"},
+    },
+)
+
+SSL_CERT_CHECK = tool_to_ollama_schema(
+   

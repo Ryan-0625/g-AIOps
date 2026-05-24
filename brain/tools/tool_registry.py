@@ -173,6 +173,5 @@ REGISTRY: dict[str, dict[str, Any]] = {
             "name": {"type": "string", "description": "Tool name to delete"},
         },
     },
-}
-
-AVAILABLE_ACTIONS = list(REGISTRY.keys())
+    "traceroute": {
+        "description": "P
