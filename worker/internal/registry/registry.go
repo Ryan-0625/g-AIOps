@@ -19,6 +19,7 @@ type Tool struct {
 	Timeout      time.Duration `json:"timeout"`
 	IsIdempotent bool          `json:"is_idempotent"`
 	RiskLevel    string        `json:"risk_level"` // readonly | write | dangerous
+	Source       string        `json:"source"`     // "builtin" | "dynamic" (v2.0)
 	Execute      ToolFn        `json:"-"`
 }
 
@@ -103,8 +104,4 @@ func (r *Registry) RiskLevels() map[string]string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	levels := make(map[string]string, len(r.tools))
-	for name, t := range r.tools {
-		levels[name] = t.RiskLevel
-	}
-	return levels
-}
+	

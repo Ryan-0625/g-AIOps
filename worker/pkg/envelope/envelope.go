@@ -20,14 +20,27 @@ import (
 type MsgType string
 
 const (
-	MsgRequest   MsgType = "request"
-	MsgResponse  MsgType = "response"
-	MsgEvent     MsgType = "event"
-	MsgAck       MsgType = "ack"
-	MsgHeartbeat MsgType = "heartbeat"
+	MsgRequest    MsgType = "request"
+	MsgResponse   MsgType = "response"
+	MsgEvent      MsgType = "event"
+	MsgAck        MsgType = "ack"
+	MsgHeartbeat  MsgType = "heartbeat"
+	MsgToolDeploy MsgType = "tool_deploy"   // v1.1: tool deployment request
+	MsgToolCode   MsgType = "tool_code"     // v1.1: tool code chunk transfer
+	MsgToolStatus MsgType = "tool_status"   // v1.1: tool status report
 )
 
 func (t MsgType) Valid() bool {
+	switch t {
+	case MsgRequest, MsgResponse, MsgEvent, MsgAck, MsgHeartbeat,
+		MsgToolDeploy, MsgToolCode, MsgToolStatus:
+		return true
+	}
+	return false
+}
+
+// IsV1 returns true if this is a v1.0 compatible message type.
+func (t MsgType) IsV1() bool {
 	switch t {
 	case MsgRequest, MsgResponse, MsgEvent, MsgAck, MsgHeartbeat:
 		return true
@@ -120,6 +133,7 @@ type Payload struct {
 }
 
 // Envelope is the top-level wire format for all gAIOps messages.
+// v1.1 adds: CodeBody, DeployID, RuntimeHints (all optional — backward compatible).
 type Envelope struct {
 	ProtoVersion  string            `json:"proto_version"`
 	TraceID       string            `json:"trace_id"`
@@ -134,6 +148,25 @@ type Envelope struct {
 	Priority      Priority          `json:"priority,omitempty"`
 	TTLSeconds    int               `json:"ttl_seconds,omitempty"`
 	Payload       Payload           `json:"payload"`
+
+	// v1.1 fields (optional)
+	CodeBody      string            `json:"code_body,omitempty"`
+	DeployID      string            `json:"deploy_id,omitempty"`
+	RuntimeHints  *RuntimeHints     `json:"runtime_hints,omitempty"`
+}
+
+// RuntimeHints carries execution hints for dynamic tool deployment.
+type RuntimeHints struct {
+	Interpreter    string          `json:"interpreter,omitempty"`     // bash | python3 | node
+	Entrypoint     string          `json:"entrypoint,omitempty"`     // function name
+	EnvVars        map[string]string `json:"env_vars,omitempty"`    // environment variables
+	ResourceLimits *ResourceLimits `json:"resource_limits,omitempty"`
+}
+
+type ResourceLimits struct {
+	MaxMemoryMB int `json:"max_memory_mb,omitempty"`
+	MaxCPUCores float64 `json:"max_cpu_cores,omitempty"`
+	MaxTimeoutS int `json:"max_timeout_s,omitempty"`
 }
 
 // --- Validation ---
@@ -182,6 +215,22 @@ func (e *Envelope) Validate() []string {
 	}
 	if e.TTLSeconds < 1 || e.TTLSeconds > 300 {
 		add("ttl_seconds must be between 1 and 300")
+	}
+
+	// v1.1 fields validation
+	if e.DeployID != "" && !uuidRe.MatchString(e.DeployID) {
+		add("deploy_id must be a valid UUID")
+	}
+	if e.MsgType == MsgToolDeploy || e.MsgType == MsgToolCode {
+		if e.CodeBody == "" {
+			add("code_body is required for tool_deploy/tool_code messages")
+		}
+		if e.DeployID == "" {
+			add("deploy_id is required for tool_deploy/tool_code messages")
+		}
+	}
+	if e.MsgType == MsgToolDeploy && (e.RuntimeHints == nil || e.RuntimeHints.Interpreter == "") {
+		add("runtime_hints.interpreter is required for tool_deploy messages")
 	}
 
 	// Payload
@@ -236,73 +285,4 @@ func MustMarshal(e *Envelope) []byte {
 // --- Constructors ---
 
 // NewRequest creates a request envelope targeting a worker.
-func NewRequest(traceID, msgID, action string, params map[string]interface{}, opts ...RequestOption) *Envelope {
-	e := &Envelope{
-		ProtoVersion: "1.0",
-		TraceID:      traceID,
-		MsgID:        msgID,
-		MsgType:      MsgRequest,
-		Timestamp:    now(),
-		Source:       RoleMaster,
-		Target:       RoleWorker,
-		TargetID:     "*",
-		Priority:     PriorityNormal,
-		TTLSeconds:   30,
-		Payload: Payload{
-			Action: action,
-			Params: params,
-			Status: StatusPending,
-		},
-	}
-	for _, opt := range opts {
-		opt(e)
-	}
-	return e
-}
-
-type RequestOption func(*Envelope)
-
-func WithTargetID(id string) RequestOption        { return func(e *Envelope) { e.TargetID = id } }
-func WithPriority(p Priority) RequestOption        { return func(e *Envelope) { e.Priority = p } }
-func WithTTL(ttl int) RequestOption                { return func(e *Envelope) { e.TTLSeconds = ttl } }
-func WithCorrelationID(id string) RequestOption    { return func(e *Envelope) { e.CorrelationID = id } }
-
-// NewResponse creates a response envelope correlated to a request.
-func NewResponse(req *Envelope, status Status, data map[string]interface{}, errInfo *ErrorInfo) *Envelope {
-	return &Envelope{
-		ProtoVersion:  req.ProtoVersion,
-		TraceID:       req.TraceID,
-		MsgID:         newUUID(),
-		MsgType:       MsgResponse,
-		Timestamp:     now(),
-		Source:        req.Target,
-		SourceID:      req.TargetID,
-		Target:        req.Source,
-		CorrelationID: req.MsgID,
-		Payload: Payload{
-			Action: req.Payload.Action,
-			Status: status,
-			Data:   data,
-			Error:  errInfo,
-		},
-	}
-}
-
-// --- Platform helpers (overridden in tests) ---
-
-var now = func() int64 { return timeNow() }
-var newUUID = func() string { return uuidV7() }
-
-// SetNow replaces the time source (for tests).
-func SetNow(fn func() int64) { now = fn }
-
-// SetNewUUID replaces the UUID source (for tests).
-func SetNewUUID(fn func() string) { newUUID = fn }
-
-func timeNow() int64 {
-	return time.Now().Unix()
-}
-
-func uuidV7() string {
-	return uuid.NewString()
-}
+func NewRequest(traceID, msgID, action 

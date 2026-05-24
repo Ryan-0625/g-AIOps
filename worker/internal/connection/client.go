@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/gaiops/worker/internal/dynamic"
 	"github.com/gaiops/worker/internal/executor"
 	"github.com/gaiops/worker/internal/logger"
 	"github.com/gaiops/worker/internal/registry"
@@ -27,6 +28,7 @@ type Client struct {
 	dedup    *DedupCache
 	policy   *ReconnectPolicy
 	reporter *reporter.Reporter
+	dynamic  *dynamic.LifecycleManager // v2.0: dynamic tool lifecycle
 	conn     *websocket.Conn
 	mu       sync.Mutex
 	done     chan struct{}
@@ -167,7 +169,13 @@ func (c *Client) handleMessage(ctx context.Context, raw []byte) {
 		return
 	}
 
-	// Only handle requests from Master.
+	// v2.0: Handle tool deployment messages.
+	if env.MsgType == envelope.MsgToolDeploy || env.MsgType == envelope.MsgToolCode {
+		c.handleToolDeploy(ctx, env)
+		return
+	}
+
+	// Only handle requests from Master for v1 message types.
 	if env.MsgType != envelope.MsgRequest || env.Source != envelope.RoleMaster {
 		return
 	}
@@ -284,44 +292,35 @@ func (c *Client) SetReporter(r *reporter.Reporter) {
 	c.reporter = r
 }
 
-// SendEnvelope marshals and delivers an envelope to Master.
-// Thread-safe; safe to call from the Reporter's background goroutine.
-func (c *Client) SendEnvelope(env *envelope.Envelope) {
-	c.send(env)
+// SetDynamicManager attaches the dynamic tool lifecycle manager (v2.0).
+func (c *Client) SetDynamicManager(dm *dynamic.LifecycleManager) {
+	c.dynamic = dm
 }
 
-// ReAdvertise re-announces capabilities to Master, picking up any
-// dynamically registered tools from the global registry.
-func (c *Client) ReAdvertise() {
-	c.SendCapabilityAdvertise(
-		registry.Global.Actions(),
-		registry.Global.RiskLevels(),
-		c.config.MaxConcurrent,
-		c.config.WorkerVersion,
-	)
-}
+// ── v2.0: Tool deployment handlers ────────────────────────────────────────
 
-// SendCapabilityAdvertise announces supported actions to Master.
-func (c *Client) SendCapabilityAdvertise(actions []string, riskLevels map[string]string, maxConcurrent int, version string) {
-	env := &envelope.Envelope{
-		ProtoVersion: "1.0",
-		MsgID:        fmt.Sprintf("cap-%d", time.Now().UnixNano()),
-		MsgType:      envelope.MsgEvent,
-		Timestamp:    time.Now().Unix(),
-		Source:       envelope.RoleWorker,
-		SourceID:     c.config.WorkerID,
-		Target:       envelope.RoleMaster,
-		Payload: envelope.Payload{
-			Action: "capability.advertise",
-			Status: envelope.StatusSuccess,
-			Params: map[string]interface{}{
-				"actions":            actions,
-				"risk_levels":        riskLevels,
-				"max_concurrent":     maxConcurrent,
-				"worker_version":     version,
-				"heartbeat_interval": c.config.HeartbeatInterval,
-			},
-		},
+// handleToolDeploy processes tool_deploy and tool_code messages from Master.
+func (c *Client) handleToolDeploy(ctx context.Context, env *envelope.Envelope) {
+	if c.dynamic == nil {
+		c.log.Warn("Dynamic tool manager not available, ignoring deploy")
+		return
 	}
-	c.send(env)
-}
+
+	deployID := env.DeployID
+	action := env.Payload.Action
+	code := env.CodeBody
+
+	c.log.Info("Processing tool deploy", logger.WithData(map[string]interface{}{
+		"deploy_id": deployID,
+		"action":    action,
+	}))
+
+	// Determine language from runtime hints.
+	lang := "bash"
+	if env.RuntimeHints != nil && env.RuntimeHints.Interpreter != "" {
+		lang = env.RuntimeHints.Interpreter
+	}
+
+	// Determine risk level from params.
+	riskLevel := "readonly"
+	if rl, ok := env.Payload.Par
