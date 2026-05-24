@@ -11,6 +11,9 @@ import { Summarizer, SummarizedResult } from "../orchestrator/summarizer";
 import { Interceptor } from "../security/interceptor";
 import { Approver } from "../security/approver";
 import { Registry, WorkerNode } from "../store/registry";
+import { ToolRegistry } from "../store/tool-registry";
+import { ToolDeployer } from "../orchestrator/tool-deployer";
+import { CodeApprover } from "../security/code-approver";
 import { writeAudit, writeAuditEvent } from "../security/audit";
 import { createLogger } from "../logger";
 import { WebSocketServer } from "./ws-server";
@@ -54,6 +57,9 @@ export function brainApiRouter(
   wsServer: WebSocketServer,
   clusterToken: string,
   metricsCollector?: MetricsCollector,
+  toolRegistry?: ToolRegistry,
+  toolDeployer?: ToolDeployer,
+  codeApprover?: CodeApprover,
 ): Router {
   const router = Router();
 
@@ -176,7 +182,7 @@ export function brainApiRouter(
     // ── Build envelope ──
     const msgId = uuidv4();
     const env: Envelope = {
-      proto_version: "1.0",
+      proto_version: "1.1",
       trace_id: body.trace_id,
       msg_id: msgId,
       msg_type: "request",
@@ -250,17 +256,4 @@ export function brainApiRouter(
     tracker.track(msgId, env, route.workerId);
     wsServer.sendToWorker(route.workerId, env);
     writeAudit(env);
-    metricsCollector?.recordRequest("success", false);
-
-    // ── Response ──
-    const response: BrainResponse = {
-      trace_id: body.trace_id,
-      msg_id: msgId,
-      status: "pending",
-      action: body.action,
-    };
-    res.json(response);
-  });
-
-  return router;
-}
+    metricsCollec

@@ -9,6 +9,10 @@ export interface WorkerCapability {
   maxConcurrent: number;
   workerVersion: string;
   heartbeatInterval: number;
+  // v2.0: dynamic tool support
+  supportsDynamicTools?: boolean;
+  supportedInterpreters?: string[];
+  maxCodeSize?: number;
 }
 
 export interface WorkerNode {
@@ -149,9 +153,4 @@ export class Registry {
    */
   getRiskLevel(action: string): string {
     if (this.workers.size === 0) return "unknown";
-    for (const w of this.workers.values()) {
-      if (w.caps.riskLevels[action]) return w.caps.riskLevels[action];
-    }
-    return "readonly";
-  }
-}
+    for (const w of this.
