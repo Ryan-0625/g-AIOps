@@ -1,4 +1,4 @@
-package tools
+﻿package tools
 
 import (
 	"context"
@@ -52,7 +52,7 @@ func executeSSLCertCheck(ctx context.Context, params map[string]interface{}) (ma
 
 	state := tlsConn.ConnectionState()
 	var certInfo []map[string]interface{}
-	for _, cert := state.PeerCertificates {
+	for _, cert := range state.PeerCertificates {
 		if cert == nil {
 			continue
 		}
@@ -87,3 +87,4 @@ func executeSSLCertCheck(ctx context.Context, params map[string]interface{}) (ma
 		"tls_version":   fmt.Sprintf("TLS %d.%d", state.Version>>8, state.Version&0xFF),
 	}, nil
 }
+

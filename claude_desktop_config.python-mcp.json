@@ -1,0 +1,57 @@
+{
+    "deploymentMode":  "3p",
+    "preferences":  {
+                        "localAgentModeTrustedFolders":  [
+                                                             "E:\\VScode(study)\\Project\\AI-Novels",
+                                                             "E:\\VScode(study)\\Project\\g-AIOps",
+                                                             "E:\\IDEA\\AI-Meeting(test)",
+                                                             "E:\\IDEA\\AI-Meeting-repo",
+                                                             "E:\\IDEA\\FormalReviewSystem(plus)",
+                                                             "C:\\Users\\Ryan\\Desktop"
+                                                         ],
+                        "coworkScheduledTasksEnabled":  true,
+                        "ccdScheduledTasksEnabled":  false,
+                        "sidebarMode":  "task",
+                        "bypassPermissionsGateByAccount":  {
+                                                               "77cf993f-6360-4150-97bc-09766524f00a":  true
+                                                           },
+                        "coworkWebSearchEnabled":  true,
+                        "remoteToolsDeviceName":  "desktop-156c762",
+                        "epitaxyPrefs":  {
+                                             "starred-local-code-sessions":  [
+
+                                                                             ],
+                                             "starred-cowork-spaces":  [
+
+                                                                       ],
+                                             "starred-session-groups":  [
+
+                                                                        ],
+                                             "dframe-local-slice":  {
+                                                                        "pinnedOrder":  [
+
+                                                                                        ],
+                                                                        "customGroupAssignments":  {
+
+                                                                                                   },
+                                                                        "customGroupOrder":  {
+
+                                                                                             }
+                                                                    }
+                                         },
+                        "bypassPermissionsOptInByAccount":  {
+                                                                "77cf993f-6360-4150-97bc-09766524f00a":  true
+                                                            },
+                        "ccRemoteControlDefaultEnabled":  false,
+                        "dockBounceEnabled":  true,
+                        "launchPreviewPersistSession":  true
+                    },
+    "mcpServers":  {
+                       "shell":  {
+                                     "command":  "python",
+                                     "args":  [
+                                                  "E:\\VScode(study)\\Project\\g-AIOps\\mcp-shell-server.py"
+                                              ]
+                                 }
+                   }
+}

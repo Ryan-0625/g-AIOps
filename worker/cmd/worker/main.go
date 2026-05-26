@@ -97,9 +97,9 @@ func main() {
 	healthMux := http.NewServeMux()
 	healthMux.HandleFunc("/health", server.HealthHandler)
 	healthMux.HandleFunc("/metrics", server.MetricsHandler)
-	healthServer := &http.Server{Addr: ":9090", Handler: healthMux}
+	healthServer := &http.Server{Addr: ":32090", Handler: healthMux}
 	go func() {
-		log.Info("Health endpoint listening", logger.WithData(map[string]interface{}{"addr": ":9090"}))
+		log.Info("Health endpoint listening", logger.WithData(map[string]interface{}{"addr": ":32090"}))
 		if err := healthServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Error("Health server failed", logger.WithData(map[string]interface{}{"error": err.Error()}))
 		}

@@ -195,10 +195,18 @@ async def main() -> None:
         "master_api_url": cfg.master_api_url,
     }})
 
-    # Signal handling.
+    # Signal handling (Windows-compatible).
     loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, lambda s=sig: _shutdown(s))
+    try:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, lambda s=sig: _shutdown(s))
+    except NotImplementedError:
+        # Windows does not support loop.add_signal_handler
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                signal.signal(sig, lambda s, f: _shutdown(s))
+            except (ValueError, OSError):
+                pass
 
     logger.info("Brain ready — awaiting triggers")
 
@@ -484,9 +492,9 @@ async def main() -> None:
     global health_runner
     health_runner = web.AppRunner(health_app)
     await health_runner.setup()
-    health_site = web.TCPSite(health_runner, "0.0.0.0", 9091)
+    health_site = web.TCPSite(health_runner, "0.0.0.0", 32091)
     await health_site.start()
-    logger.info("Health endpoint listening", extra={"data": {"addr": "0.0.0.0:9091"}})
+    logger.info("Health endpoint listening", extra={"data": {"addr": "0.0.0.0:32091"}})
 
     # Keep alive indefinitely.
     await asyncio.Event().wait()

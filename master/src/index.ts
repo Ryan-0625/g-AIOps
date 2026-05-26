@@ -1,4 +1,4 @@
-import express, { Request, Response, NextFunction } from "express";
+﻿import express, { Request, Response, NextFunction } from "express";
 import http from "http";
 import https from "https";
 import fs from "fs";
@@ -18,10 +18,14 @@ import { createLogger } from "./logger";
 import { configureAudit } from "./security/audit";
 import { MetricsCollector } from "./store/metrics";
 import { metricsRouter } from "./server/metrics";
+import { InspectionStore } from "./store/inspection-store";
+import { Inspector } from "./orchestrator/inspector";
+import { inspectionApiRouter } from "./server/inspection-api";
+import { webhookApiRouter } from "./server/webhook-api";
 
 const logger = createLogger("master");
 
-// Process-level crash handlers — must be registered before main().
+// Process-level crash handlers 鈥?must be registered before main().
 process.on("uncaughtException", (err) => {
   logger.error("Uncaught exception", {
     data: { message: err.message, stack: err.stack },
@@ -37,7 +41,7 @@ process.on("unhandledRejection", (reason) => {
 
 const cfg = loadConfig();
 
-// Validate config — log warnings, exit on errors.
+// Validate config 鈥?log warnings, exit on errors.
 const { warnings, errors } = validateConfig(cfg);
 for (const w of warnings) {
   logger.warn("Config: " + w.message, { data: { field: w.field } });
@@ -46,7 +50,7 @@ if (errors.length > 0) {
   for (const e of errors) {
     logger.error("Config: " + e.message, { data: { field: e.field } });
   }
-  logger.error("Config validation failed — exiting", { data: { error_count: errors.length } });
+  logger.error("Config validation failed 鈥?exiting", { data: { error_count: errors.length } });
   process.exit(1);
 }
 
@@ -59,26 +63,27 @@ function main(): void {
   const port = useTls ? cfg.server.api_port : cfg.server.ws_port;
   logger.info("Master starting", { data: { port } });
 
-  // ── Store ──
+  // 鈹€鈹€ Store 鈹€鈹€
   const registry = new Registry();
   const tracker = new Tracker();
   const queue = new PriorityQueue();
   const metricsCollector = new MetricsCollector();
+  const inspectionStore = new InspectionStore();
 
-  // ── Audit ──
+  // 鈹€鈹€ Audit 鈹€鈹€
   configureAudit({
     logPath: cfg.audit.log_path || undefined,
     enabled: cfg.audit.enabled,
   });
 
-  // ── Orchestrator ──
+  // 鈹€鈹€ Orchestrator 鈹€鈹€
   const masterRouter = new Router(registry);
   const summarizer = new Summarizer();
 
-  // ── Security ──
+  // 鈹€鈹€ Security 鈹€鈹€
   const interceptor = new Interceptor(registry, cfg.security.high_risk_actions);
 
-  // ── Server ──
+  // 鈹€鈹€ Server 鈹€鈹€
   const app = express();
   app.use(express.json({ limit: cfg.server.api.body_limit }));
 
@@ -91,6 +96,12 @@ function main(): void {
 
   const wsServer = new WebSocketServer(registry, tracker, masterRouter, queue, cfg.cluster_token, cfg.server.ws);
   wsServer.attach(server);
+
+  // ││ Inspection System ││
+  const inspector = new Inspector(inspectionStore, registry, wsServer);
+  if (cfg.inspection.enabled) {
+    inspector.start(cfg.inspection.tick_interval_ms);
+  }
 
   // Approver needs wsServer for the onApprove callback.
   const approver = new Approver(
@@ -108,13 +119,15 @@ function main(): void {
     },
   );
 
-  // ── Routes ──
+  // 鈹€鈹€ Routes 鈹€鈹€
   app.use(healthRouter(registry, tracker, approver, cfg));
   app.use(metricsRouter(registry, tracker, queue, approver, metricsCollector));
   app.use(brainApiRouter(registry, queue, masterRouter, tracker, summarizer, interceptor, approver, wsServer, cfg.cluster_token, metricsCollector));
   app.use(traceRouter(tracker));
+  app.use(inspectionApiRouter(inspectionStore, inspector, registry, cfg.cluster_token));
+  app.use(webhookApiRouter(registry, tracker, masterRouter, queue, interceptor, approver, wsServer, cfg.cluster_token, metricsCollector));
 
-  // Catch-all Express error middleware — must be last app.use().
+  // Catch-all Express error middleware 鈥?must be last app.use().
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
@@ -124,7 +137,7 @@ function main(): void {
     res.status(status).json({ error: message, status: "error" });
   });
 
-  // ── Periodic maintenance ──
+  // 鈹€鈹€ Periodic maintenance 鈹€鈹€
   setInterval(() => {
     const orphans = tracker.reapOrphans();
     if (orphans > 0) logger.debug("Reaped orphans", { data: { count: orphans } });
@@ -135,14 +148,15 @@ function main(): void {
     if (chunks > 0) logger.debug("Reaped chunk groups", { data: { count: chunks } });
   }, 15_000);
 
-  // ── Start ──
+  // 鈹€鈹€ Start 鈹€鈹€
   server.listen(port, cfg.server.host, () => {
     logger.info("Master listening", { data: { port, tls: useTls } });
   });
 
-  // ── Graceful shutdown ──
+  // 鈹€鈹€ Graceful shutdown 鈹€鈹€
   const shutdown = async (signal: string) => {
     logger.info("Shutting down", { data: { signal } });
+    inspector.stop();
     // Drain in-flight requests before closing server.
     await tracker.drain(8000);
     server.close(() => {
@@ -157,3 +171,5 @@ function main(): void {
 }
 
 main();
+
+

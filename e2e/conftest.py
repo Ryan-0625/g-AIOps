@@ -23,13 +23,13 @@ def pytest_addoption(parser):
     )
     parser.addoption(
         "--base-url",
-        default="http://localhost:8080",
-        help="Master API base URL (default: http://localhost:8080)",
+        default="http://localhost:32080",
+        help="Master API base URL (default: http://localhost:32080)",
     )
     parser.addoption(
         "--ws-url",
-        default="ws://localhost:8080/ws",
-        help="Master WebSocket URL (default: ws://localhost:8080/ws)",
+        default="ws://localhost:32080/ws",
+        help="Master WebSocket URL (default: ws://localhost:32080/ws)",
     )
     parser.addoption(
         "--cluster-token",

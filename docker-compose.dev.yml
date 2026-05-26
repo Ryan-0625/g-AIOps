@@ -9,7 +9,7 @@ services:
       context: ./master
       dockerfile: Dockerfile.dev
     ports:
-      - "8080:8080"
+      - "8080:32080"
     volumes:
       - ./master/src:/app/src
       - ./config/master.yaml:/etc/gaiops/master.yaml:ro
@@ -22,7 +22,7 @@ services:
       - TLS_CERT_PATH=${TLS_CERT_PATH:-}
       - TLS_KEY_PATH=${TLS_KEY_PATH:-}
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:32080/health"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -45,7 +45,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-debug}
       - TLS_SKIP_VERIFY=${TLS_SKIP_VERIFY:-true}
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:9090/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:32090/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -67,10 +67,10 @@ services:
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b}
       - CLUSTER_TOKEN=dev-token-change
-      - MASTER_API_URL=http://master:8080
+      - MASTER_API_URL=http://master:32080
       - TLS_VERIFY=${TLS_VERIFY:-false}
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:9091/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:32091/health"]
       interval: 30s
       timeout: 5s
       retries: 3

@@ -245,3 +245,29 @@ init-master:
 
 init-brain:
 	cd brain && pip install langgraph aiohttp pydantic pyyaml 2>&1 | tail -5
+
+# === v2.0 动态工具测试 ===
+
+.PHONY: test-dynamic-tools
+
+test-dynamic-tools:
+	@echo "[+] Testing dynamic tool deployment..."
+	@CLUSTER_TOKEN=$(CLUSTER_TOKEN) python3 -c "
+import urllib.request, json
+token = '$(CLUSTER_TOKEN)'
+headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
+code = '''printf '{\"status\":\"ok\",\"data\":{\"message\":\"hello\"}}\\n'''
+body = json.dumps({'action': 'custom.hello', 'code': code, 'interpreter': 'bash'}).encode()
+req = urllib.request.Request('http://localhost:8080/api/v1/tools/deploy', data=body, headers=headers)
+try:
+    resp = urllib.request.urlopen(req, timeout=10)
+    print('[OK] Deploy:', resp.read().decode())
+except Exception as e:
+    print('[!] Deploy failed:', e)
+req2 = urllib.request.Request('http://localhost:8080/api/v1/tools', headers=headers)
+try:
+    resp2 = urllib.request.urlopen(req2, timeout=5)
+    print('[OK] Tools list:', resp2.read().decode())
+except Exception as e:
+    print('[!] List failed:', e)
+"

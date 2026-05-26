@@ -12,7 +12,7 @@ llm:
 
 # === Master 连接 ===
 master:
-  api_url: "http://localhost:8081/api/v1"  # Master REST API 地址
+  api_url: "http://localhost:32080/api/v1"  # Master REST API 地址
   cluster_token: "dev-token-change-in-production"
   request_timeout: 30                      # 请求超时（秒）
 

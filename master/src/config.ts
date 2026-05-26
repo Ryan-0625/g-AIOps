@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Master configuration loader.
  *
  * Loads config/master.yaml and merges with environment variable overrides.
@@ -9,7 +9,7 @@ import fs from "fs";
 import path from "path";
 import yaml from "js-yaml";
 
-// ── Type ────────────────────────────────────────────────────────────────
+// 鈹€鈹€ Type 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 export interface MasterConfig {
   server: {
@@ -54,15 +54,23 @@ export interface MasterConfig {
     log_path: string;
     enabled: boolean;
   };
+  inspection: {
+    enabled: boolean;
+    max_inspections: number;
+    max_alerts: number;
+    tick_interval_ms: number;
+    default_interval_seconds: number;
+    probe_timeout_seconds: number;
+  };
 }
 
-// ── Defaults ────────────────────────────────────────────────────────────
+// 鈹€鈹€ Defaults 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 const DEFAULTS: MasterConfig = {
   server: {
     host: "0.0.0.0",
-    ws_port: 8080,
-    api_port: 8080,
+    ws_port: 32080,
+    api_port: 32080,
     ws: {
       max_connections: 5000,
       connection_rate_limit: 50,
@@ -101,9 +109,17 @@ const DEFAULTS: MasterConfig = {
     log_path: "/var/log/gaiops/audit.log",
     enabled: true,
   },
+  inspection: {
+    enabled: true,
+    max_inspections: 100,
+    max_alerts: 5000,
+    tick_interval_ms: 10000,
+    default_interval_seconds: 300,
+    probe_timeout_seconds: 30,
+  },
 };
 
-// ── Helper: deep merge (simple 1-level scalar override) ─────────────────
+// 鈹€鈹€ Helper: deep merge (simple 1-level scalar override) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function mergeConfig(base: MasterConfig, overrides: Partial<MasterConfig>): MasterConfig {
   const result = { ...base };
@@ -120,7 +136,7 @@ function mergeConfig(base: MasterConfig, overrides: Partial<MasterConfig>): Mast
   return result;
 }
 
-// ── Env overrides ───────────────────────────────────────────────────────
+// 鈹€鈹€ Env overrides 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function envOverrides(): Partial<MasterConfig> {
   const overrides: Partial<MasterConfig> = {};
@@ -148,11 +164,14 @@ function envOverrides(): Partial<MasterConfig> {
   if (process.env.TLS_CERT_PATH && process.env.TLS_KEY_PATH) {
     // TLS info is consumed directly in index.ts from env
   }
+  if (process.env.INSPECTION_ENABLED !== undefined) {
+    overrides.inspection = { ...DEFAULTS.inspection, enabled: process.env.INSPECTION_ENABLED !== "false" };
+  }
 
   return overrides;
 }
 
-// ── Load ────────────────────────────────────────────────────────────────
+// 鈹€鈹€ Load 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 let cached: MasterConfig | null = null;
 
@@ -199,7 +218,7 @@ function findConfigPath(): string {
   return "";
 }
 
-// ── Validation ───────────────────────────────────────────────────────────
+// 鈹€鈹€ Validation 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 export interface ConfigWarning {
   field: string;
@@ -221,7 +240,7 @@ export function validate(cfg: MasterConfig): { warnings: ConfigWarning[]; errors
 
   // Cluster token must not be the dev default.
   if (cfg.cluster_token === "dev-token-change-in-production") {
-    warnings.push({ field: "cluster_token", message: "Using dev default — set CLUSTER_TOKEN env var for production" });
+    warnings.push({ field: "cluster_token", message: "Using dev default 鈥?set CLUSTER_TOKEN env var for production" });
   }
   if (cfg.cluster_token.length < 8) {
     warnings.push({ field: "cluster_token", message: `Length ${cfg.cluster_token.length} is short (recommend >= 16 chars)` });
@@ -273,3 +292,4 @@ export function validate(cfg: MasterConfig): { warnings: ConfigWarning[]; errors
 export function reset(): void {
   cached = null;
 }
+

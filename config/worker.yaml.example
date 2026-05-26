@@ -3,7 +3,7 @@
 
 # === 节点身份 ===
 worker_id: "dev-worker-1"                  # 必填，全局唯一，跨重启持久化
-master_url: "ws://localhost:8080/ws"       # 必填，Master WebSocket 地址
+master_url: "ws://localhost:32080/ws"       # 必填，Master WebSocket 地址
 cluster_token: "dev-token-change-in-production"  # 必填，与 Master 共享
 
 # === 连接 ===

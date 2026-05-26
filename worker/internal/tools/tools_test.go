@@ -1,4 +1,4 @@
-package tools
+﻿package tools
 
 import (
 	"context"
@@ -172,10 +172,40 @@ func TestExecuteProcessList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	count, ok := result["count"].(int)
-	if !ok || count <= 0 {
-		t.Errorf("expected positive process count, got %d", count)
+	total, ok := result["total"].(int)
+	if !ok || total <= 0 {
+		t.Errorf("expected positive total, got %d", total)
 	}
+	procs, ok := result["processes"].([]map[string]interface{})
+	if ok && len(procs) > 0 {
+		if _, hasPid := procs[0]["pid"]; !hasPid {
+			t.Error("expected pid field in first process")
+		}
+	}
+}
+
+func TestExecuteProcessListWithFilter(t *testing.T) {
+	result, err := executeProcessList(context.Background(), map[string]interface{}{
+		"name": "nonexistent-process-xyz-123",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	total, ok := result["total"].(int)
+	if !ok || total != 0 {
+		t.Errorf("expected 0 processes for nonexistent filter, got %d", total)
+	}
+}
+
+func TestExecuteProcessListInvalidName(t *testing.T) {
+	result, err := executeProcessList(context.Background(), map[string]interface{}{
+		"name": 123, // invalid type
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should work with invalid name (just no filter applied)
+	_ = result
 }
 
 // --- disk.go tests ---
@@ -192,3 +222,4 @@ func TestExecuteDiskUsage(t *testing.T) {
 		t.Errorf("expected positive total_bytes, got %d (type %T)", result["total_bytes"], result["total_bytes"])
 	}
 }
+

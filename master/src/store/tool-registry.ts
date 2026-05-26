@@ -1,9 +1,6 @@
-/**
- * ToolRegistry — 集群级动态工具目录
- *
- * 维护整个集群中所有 Worker 上部署的动态工具清单。
- * Brain 和 Master 可通过此模块查询哪些工具在哪些 Worker 上可用。
- */
+﻿/**
+ * ToolRegistry 鈥?闆嗙兢绾у姩鎬佸伐鍏风洰褰? *
+ * 缁存姢鏁翠釜闆嗙兢涓墍鏈?Worker 涓婇儴缃茬殑鍔ㄦ€佸伐鍏锋竻鍗曘€? * Brain 鍜?Master 鍙€氳繃姝ゆā鍧楁煡璇㈠摢浜涘伐鍏峰湪鍝簺 Worker 涓婂彲鐢ㄣ€? */
 import { createLogger } from "../logger";
 
 const logger = createLogger("master");
@@ -91,7 +88,7 @@ export class ToolRegistry {
     const byWorker = this.tools.get(action);
     if (!byWorker) return [];
     return Array.from(byWorker.values())
-      .filter(e => e.state === "deployed");
+      .filter(e => e.state === "deployed" || e.state === "running");
   }
 
   /** Check if any worker has a specific dynamic tool deployed. */
@@ -104,7 +101,7 @@ export class ToolRegistry {
     const result: Record<string, DynamicToolEntry[]> = {};
     for (const [action, byWorker] of this.tools) {
       result[action] = Array.from(byWorker.values())
-        .filter(e => e.state === "deployed");
+        .filter(e => e.state === "deployed" || e.state === "running");
     }
     return result;
   }
@@ -114,7 +111,7 @@ export class ToolRegistry {
     return Array.from(this.tools.keys())
       .filter(action => {
         const byWorker = this.tools.get(action);
-        return byWorker && Array.from(byWorker.values()).some(e => e.state === "deployed");
+        return byWorker && Array.from(byWorker.values()).some(e => e.state === "deployed" || e.state === "running");
       });
   }
 
@@ -123,7 +120,7 @@ export class ToolRegistry {
     let totalDeployments = 0;
     for (const byWorker of this.tools.values()) {
       for (const entry of byWorker.values()) {
-        if (entry.state === "deployed") totalDeployments++;
+        if (entry.state === "deployed" || entry.state === "running") totalDeployments++;
       }
     }
     return {
@@ -141,7 +138,7 @@ export class ToolRegistry {
     if (!entry) return;
     entry.lastUsed = Date.now();
     entry.executeCount++;
-    entry.state = "running";
+    entry.state = "deployed";
   }
 
   /** Clean up stale entries for a disconnected worker. */
@@ -159,3 +156,4 @@ export class ToolRegistry {
     return count;
   }
 }
+

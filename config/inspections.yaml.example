@@ -1,0 +1,123 @@
+﻿# Example Master inspection configurations
+# Copy to config/master.yaml and customize
+
+inspections:
+  # Port check — ensure critical services are running
+  - name: "SSH Port Check"
+    enabled: true
+    probe_type: "port.check"
+    probe_params:
+      host: "localhost"
+      port: 22
+    target_mode: "all"
+    schedule_mode: "interval"
+    interval_seconds: 300
+    timeout_seconds: 10
+    alert_rules:
+      - metric: "reachable"
+        operator: "=="
+        threshold: false
+        severity: "critical"
+        message: "SSH port unreachable on {worker_id}"
+
+  # HTTP health check — monitor web services
+  - name: "Web Service Health"
+    enabled: true
+    probe_type: "http.health"
+    probe_params:
+      url: "http://localhost:80/health"
+    target_mode: "all"
+    schedule_mode: "interval"
+    interval_seconds: 60
+    timeout_seconds: 10
+    alert_rules:
+      - metric: "status_code"
+        operator: ">="
+        threshold: 500
+        severity: "critical"
+        message: "HTTP 5xx on {worker_id}: status={value}"
+
+  # Disk usage monitoring
+  - name: "Root Disk Usage"
+    enabled: true
+    probe_type: "disk.usage"
+    probe_params:
+      path: "/"
+    target_mode: "all"
+    schedule_mode: "interval"
+    interval_seconds: 300
+    timeout_seconds: 10
+    alert_rules:
+      - metric: "usage_pct"
+        operator: ">"
+        threshold: 85
+        severity: "warning"
+        message: "Disk usage on {worker_id}: {value}% (threshold: {threshold}%)"
+      - metric: "usage_pct"
+        operator: ">"
+        threshold: 95
+        severity: "critical"
+        message: "CRITICAL: Disk usage on {worker_id}: {value}%"
+
+  # SSL certificate expiry
+  - name: "SSL Certificate Check"
+    enabled: true
+    probe_type: "ssl.cert_check"
+    probe_params:
+      hostname: "example.com"
+      port: 443
+    target_mode: "all"
+    schedule_mode: "interval"
+    interval_seconds: 86400
+    timeout_seconds: 15
+    alert_rules:
+      - metric: "days_remaining"
+        operator: "<"
+        threshold: 30
+        severity: "warning"
+        message: "SSL cert on {worker_id} expires in {value} days"
+      - metric: "days_remaining"
+        operator: "<"
+        threshold: 7
+        severity: "critical"
+        message: "SSL cert on {worker_id} expires in {value} days!"
+
+  # Process monitoring
+  - name: "Nginx Process Check"
+    enabled: true
+    probe_type: "process.list"
+    probe_params:
+      name: "nginx"
+    target_mode: "all"
+    schedule_mode: "interval"
+    interval_seconds: 120
+    timeout_seconds: 10
+    alert_rules:
+      - metric: "total"
+        operator: "=="
+        threshold: 0
+        severity: "critical"
+        message: "Nginx not running on {worker_id}"
+
+  # ICMP ping to gateway
+  - name: "Network Gateway Ping"
+    enabled: true
+    probe_type: "ping.icmp"
+    probe_params:
+      target: "8.8.8.8"
+      count: 2
+    target_mode: "all"
+    schedule_mode: "interval"
+    interval_seconds: 60
+    timeout_seconds: 10
+    alert_rules:
+      - metric: "packet_loss"
+        operator: ">"
+        threshold: 50
+        severity: "warning"
+        message: "High packet loss on {worker_id}: {value}%"
+      - metric: "reachable"
+        operator: "=="
+        threshold: false
+        severity: "critical"
+        message: "Network unreachable from {worker_id}"

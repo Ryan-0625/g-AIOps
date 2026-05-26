@@ -1,4 +1,4 @@
-import { newRequest, newResponse, validateEnvelope, marshal, unmarshal, mustMarshal } from "../envelope";
+﻿import { newRequest, newResponse, validateEnvelope, marshal, unmarshal, mustMarshal } from "../envelope";
 import { Envelope, ErrorInfo } from "../types";
 
 const validUUID = "550e8400-e29b-41d4-a716-446655440000";
@@ -12,7 +12,7 @@ describe("newRequest", () => {
   it("creates a request with defaults", () => {
     const env = validRequest();
     expect(env.msg_type).toBe("request");
-    expect(env.proto_version).toBe("1.0");
+    expect(env.proto_version).toBe("1.1");
     expect(env.payload.action).toBe("ping.icmp");
     expect(env.payload.status).toBe("pending");
     expect(env.priority).toBe(0);

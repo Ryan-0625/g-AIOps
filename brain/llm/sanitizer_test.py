@@ -66,4 +66,75 @@ class TestLLMOutputSanitizer:
         )
         assert "PARAM_SANITIZED" in result.error
 
-    def test_fixes_trailin
+    def test_fixes_trailing_comma(self):
+        result = self.sanitizer.sanitize_tool_call(
+            '{"action": "ping.icmp", "params": {"target": "localhost",}}'
+        )
+        assert result.action == "ping.icmp"
+        assert result.error is None
+
+    def test_fixes_unquoted_keys(self):
+        result = self.sanitizer.sanitize_tool_call(
+            "{action: 'ping.icmp', params: {target: 'localhost'}}"
+        )
+        assert result.error is None
+
+    def test_accepts_no_params(self):
+        result = self.sanitizer.sanitize_tool_call(
+            '{"action": "disk.usage", "params": {}}'
+        )
+        assert result.action == "disk.usage"
+        assert result.error is None
+
+    def test_tool_create_script_exception(self):
+        """tool.create scripts are allowed to contain shell code."""
+        result = self.sanitizer.sanitize_tool_call(
+            '{"action": "tool.create", "params": {"name": "test", "script": "curl http://internal/api"}}'
+        )
+        assert result.error is None
+        assert result.action == "tool.create"
+
+    def test_truncates_long_param(self):
+        long_val = "x" * 2000
+        result = self.sanitizer.sanitize_tool_call(
+            '{"action": "ping.icmp", "params": {"target": "' + long_val + '"}}'
+        )
+        assert result.error is None
+        assert len(result.params.get("target", "")) <= 1024
+
+    def test_uses_name_field_as_action(self):
+        result = self.sanitizer.sanitize_tool_call(
+            '{"name": "ping.icmp", "params": {"target": "localhost"}}'
+        )
+        assert result.action == "ping.icmp"
+
+    def test_uses_function_field_as_action(self):
+        result = self.sanitizer.sanitize_tool_call(
+            '{"function": "ping.icmp", "params": {"target": "localhost"}}'
+        )
+        assert result.action == "ping.icmp"
+
+
+class TestSanitizedOutput:
+    def test_defaults(self):
+        out = SanitizedOutput()
+        assert out.action is None
+        assert out.params == {}
+        assert out.error is None
+        assert out.truncated is False
+
+    def test_with_values(self):
+        out = SanitizedOutput(action="ping.icmp", params={"k": "v"}, error=None)
+        assert out.action == "ping.icmp"
+        assert out.params["k"] == "v"
+
+    def test_with_error(self):
+        out = SanitizedOutput(error="ERROR")
+        assert out.error == "ERROR"
+
+
+class TestParamSanitizationError:
+    def test_is_value_error(self):
+        err = ParamSanitizationError("bad")
+        assert isinstance(err, ValueError)
+        assert str(err) == "bad"

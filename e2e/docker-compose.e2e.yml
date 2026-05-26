@@ -15,7 +15,7 @@ services:
       CLUSTER_TOKEN: e2e-test-token
       LOG_LEVEL: debug
     ports:
-      - "9090:9090"
+      - "9090:32090"
 
   e2e-runner:
     build:
@@ -25,10 +25,10 @@ services:
       master:
         condition: service_healthy
     environment:
-      MASTER_API_URL: http://master:8080
+      MASTER_API_URL: http://master:32080
       CLUSTER_TOKEN: e2e-test-token
     command: >
       e2e/ --e2e -v --tb=short
-      --base-url http://master:8080
-      --ws-url ws://master:8080/ws
+      --base-url http://master:32080
+      --ws-url ws://master:32080/ws
       --cluster-token e2e-test-token

@@ -1,4 +1,4 @@
-import { PriorityQueue } from "../priority-queue";
+﻿import { PriorityQueue } from "../priority-queue";
 import { Envelope } from "../../protocol/types";
 
 function makeEnv(priority: number, id: string = ""): Envelope {
@@ -62,4 +62,65 @@ describe("PriorityQueue", () => {
     expect(q.pop()!.msg_id).toBe("c");
   });
 
-  i
+  it("handles mixed priorities with FIFO within each level", () => {
+    const q = new PriorityQueue();
+    q.push(makeEnv(2, "urgent-1"));
+    q.push(makeEnv(0, "normal-1"));
+    q.push(makeEnv(2, "urgent-2"));
+    q.push(makeEnv(1, "important-1"));
+    q.push(makeEnv(0, "normal-2"));
+
+    expect(q.pop()!.msg_id).toBe("urgent-1");
+    expect(q.pop()!.msg_id).toBe("urgent-2");
+    expect(q.pop()!.msg_id).toBe("important-1");
+    expect(q.pop()!.msg_id).toBe("normal-1");
+    expect(q.pop()!.msg_id).toBe("normal-2");
+  });
+
+  it("aging mechanism does not crash with mixed priorities", () => {
+    const q = new PriorityQueue();
+    q.push(makeEnv(0, "low"));
+    q.push(makeEnv(2, "high"));
+    q.push(makeEnv(1, "mid"));
+    // Should still return P2 first, then P1, then P0
+    expect(q.pop()!.msg_id).toBe("high");
+    expect(q.pop()!.msg_id).toBe("mid");
+    expect(q.pop()!.msg_id).toBe("low");
+  });
+
+  it("handles empty queue gracefully", () => {
+    const q = new PriorityQueue();
+    expect(q.pop()).toBeNull();
+    expect(q.size()).toBe(0);
+  });
+
+  it("maintains order after many push-pop cycles", () => {
+    const q = new PriorityQueue();
+    const results: string[] = [];
+
+    for (let i = 0; i < 100; i++) {
+      q.push(makeEnv(i % 3, `item-${i}`));
+    }
+
+    for (let i = 0; i < 100; i++) {
+      const item = q.pop();
+      if (item) results.push(item.msg_id);
+    }
+
+    expect(results).toHaveLength(100);
+    // All P2 items come first, then P1, then P0
+    const p2Items = results.filter(id => id.startsWith("item-") && parseInt(id.split("-")[1]) % 3 === 2);
+    const p1Items = results.filter(id => id.startsWith("item-") && parseInt(id.split("-")[1]) % 3 === 1);
+    const p0Items = results.filter(id => id.startsWith("item-") && parseInt(id.split("-")[1]) % 3 === 0);
+
+    const firstP1Index = results.indexOf(p1Items[0]);
+    const lastP2Index = results.lastIndexOf(p2Items[p2Items.length - 1]);
+    const firstP0Index = results.indexOf(p0Items[0]);
+    const lastP1Index = results.lastIndexOf(p1Items[p1Items.length - 1]);
+
+    expect(lastP2Index).toBeLessThan(firstP1Index);
+    expect(lastP1Index).toBeLessThan(firstP0Index);
+  });
+});
+
+

@@ -1,22 +1,22 @@
-// Package executor provides tool execution with concurrency control, timeout,
+﻿// Package executor provides tool execution with concurrency control, timeout,
 // panic recovery, and progress streaming for long-running tools.
 package executor
 
 import (
 	"bufio"
 	"encoding/json"
-	"fmt"
+	
 	"io"
 	"strings"
 	"sync"
 )
 
-// ── ProgressReporter ─────────────────────────────────────────────────────
+// 鈹€鈹€ ProgressReporter 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 // ProgressReporter allows long-running tools to report execution progress.
 // Tools output progress JSON lines to stderr in the format:
 //
-//	{"progress": 45, "message": "正在清理 /tmp 缓存..."}
+//	{"progress": 45, "message": "姝ｅ湪娓呯悊 /tmp 缂撳瓨..."}
 type ProgressReporter struct {
 	mu       sync.Mutex
 	callback func(percent int, message string)
@@ -64,7 +64,7 @@ func (pr *ProgressReporter) ReportProgress(percent int, message string) {
 	}
 }
 
-// ── ProgressEvent ────────────────────────────────────────────────────────
+// 鈹€鈹€ ProgressEvent 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 // ProgressEvent is a structured progress event for long-running tasks.
 type ProgressEvent struct {
@@ -78,3 +78,5 @@ func FormatProgressEvent(percent int, message string) string {
 	data, _ := json.Marshal(event)
 	return string(data)
 }
+
+

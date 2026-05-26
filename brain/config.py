@@ -11,6 +11,51 @@ import os
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
+# YAML to BrainConfig field mapping (nested section.key -> flat field)
+_YAML_FIELD_MAP = {
+    "llm": {
+        "provider": "llm_provider",
+        "model": "llm_model",
+        "base_url": "llm_base_url",
+        "timeout": "llm_timeout",
+        "max_retries": "llm_max_retries",
+        "context_limit": "llm_context_limit",
+    },
+    "master": {
+        "api_url": "master_api_url",
+        "cluster_token": "cluster_token",
+        "request_timeout": "master_request_timeout",
+    },
+    "engine": {
+        "max_retry_same_action": "max_retry_same",
+        "max_total_retries": "max_total_retries",
+        "analyst_model": "analyst_model",
+        "planner_model": "planner_model",
+    },
+    "logging": {
+        "level": "log_level",
+    },
+    "param_filter": {
+        "max_str_param_len": "max_str_param_len",
+        "max_cmd_length": "max_cmd_length",
+    },
+}
+
+
+def _yaml_to_config(data: dict, cfg) -> None:
+    for section_key, section_val in data.items():
+        if section_key in _YAML_FIELD_MAP and isinstance(section_val, dict):
+            mapping = _YAML_FIELD_MAP[section_key]
+            for yaml_key, cfg_field in mapping.items():
+                if yaml_key in section_val and section_val[yaml_key] is not None:
+                    if hasattr(cfg, cfg_field):
+                        setattr(cfg, cfg_field, section_val[yaml_key])
+        else:
+            if hasattr(cfg, section_key) and section_val is not None:
+                setattr(cfg, section_key, section_val)
+
+
+
 
 
 @dataclass
@@ -21,9 +66,10 @@ class BrainConfig:
     llm_base_url: str = "http://localhost:11434"
     llm_timeout: float = 30.0
     llm_max_retries: int = 2
+    llm_context_limit: int = 32000
 
     # Master API
-    master_api_url: str = "http://localhost:8080"
+    master_api_url: str = "http://localhost:32080"
     cluster_token: str = "dev-token"
     master_request_timeout: float = 30.0
     tls_verify: bool = True
@@ -33,6 +79,8 @@ class BrainConfig:
     max_total_retries: int = 5
 
     # Degradation / Read-Only
+    analyst_model: str = ""
+    planner_model: str = ""
     read_only: bool = False
 
     # API
@@ -53,7 +101,7 @@ class BrainConfig:
             llm_base_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
             llm_timeout=float(os.getenv("LLM_TIMEOUT", "30")),
             llm_max_retries=int(os.getenv("LLM_MAX_RETRIES", "2")),
-            master_api_url=os.getenv("MASTER_API_URL", "http://localhost:8080"),
+            master_api_url=os.getenv("MASTER_API_URL", "http://localhost:32080"),
             cluster_token=os.getenv("CLUSTER_TOKEN", "dev-token"),
             master_request_timeout=float(os.getenv("MASTER_REQUEST_TIMEOUT", "30")),
             tls_verify=os.getenv("TLS_VERIFY", "true").lower() == "true",
@@ -82,13 +130,11 @@ class BrainConfig:
         path = config_path or os.environ.get("BRAIN_CONFIG_PATH")
         if path:
             try:
-                with open(path) as f:
+                with open(path, encoding='utf-8') as f:
                     import yaml as _yaml
                     data = _yaml.safe_load(f)
                 if isinstance(data, dict):
-                    for key, val in data.items():
-                        if hasattr(cfg, key) and val is not None:
-                            setattr(cfg, key, val)
+                    _yaml_to_config(data, cfg)
             except FileNotFoundError:
                 pass  # YAML is optional
             except Exception as e:

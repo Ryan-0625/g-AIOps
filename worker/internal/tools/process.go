@@ -1,10 +1,10 @@
-package tools
+﻿package tools
 
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -25,117 +25,117 @@ func init() {
 		Action:       "process.kill",
 		Timeout:      10 * time.Second,
 		IsIdempotent: false,
-		RiskLevel:    "write",
+		RiskLevel:    "dangerous",
 		Execute:      executeProcessKill,
 	})
 }
 
 func executeProcessList(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		cmd = exec.CommandContext(ctx, "tasklist", "/FO", "CSV", "/NH")
-	} else {
-		cmd = exec.CommandContext(ctx, "ps", "-eo", "pid,ppid,user,pcpu,rss,comm", "--no-header")
-	}
+	name, _ := params["name"].(string)
 
-	out, err := cmd.Output()
+	args := []string{"axo", "pid,ppid,user,%cpu,%mem,rss,etime,command"}
+	cmd := exec.CommandContext(ctx, "ps", args...)
+	output, err := cmd.Output()
 	if err != nil {
-		return nil, executor.NewErr("PROCESS_LIST_FAILED", fmt.Sprintf("failed to list processes: %v", err))
+		return nil, executor.NewErr("PROCESS_LIST_FAILED",
+			fmt.Sprintf("failed to list processes: %v", err))
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	processes := make([]map[string]interface{}, 0, len(lines))
-	count := 0
-
-	for _, line := range lines {
-		if count >= 500 {
-			break
+	lines := strings.Split(string(output), "\n")
+	var processes []map[string]interface{}
+	for i, line := range lines {
+		if i == 0 || strings.TrimSpace(line) == "" {
+			continue
 		}
 		fields := strings.Fields(line)
-		if len(fields) < 2 {
+		if len(fields) < 8 {
 			continue
 		}
 
-		if runtime.GOOS == "windows" {
-			// tasklist CSV: "image","pid","session","session#","mem"
-			parts := strings.Split(line, ",")
-			if len(parts) >= 2 {
-				pidStr := strings.Trim(parts[1], "\"")
-				pid, _ := strconv.Atoi(pidStr)
-				processes = append(processes, map[string]interface{}{
-					"pid":   pid,
-					"name":  strings.Trim(parts[0], "\""),
-					"mem":   strings.Trim(parts[4], "\""),
-				})
-				count++
-			}
-		} else {
-			pid, _ := strconv.Atoi(fields[0])
-			rss, _ := strconv.Atoi(fields[4])
-			processes = append(processes, map[string]interface{}{
-				"pid":    pid,
-				"ppid":   fields[1],
-				"user":   fields[2],
-				"cpu_pct": fields[3],
-				"rss_kb":  rss,
-				"command": strings.Join(fields[5:], " "),
-			})
-			count++
+		proc := map[string]interface{}{
+			"pid":     safeAtoi(fields[0]),
+			"ppid":    safeAtoi(fields[1]),
+			"user":    fields[2],
+			"cpu_pct": fields[3],
+			"mem_pct": fields[4],
+			"rss_kb":  safeAtoi(fields[5]),
+			"elapsed": fields[6],
+			"command": strings.Join(fields[7:], " "),
 		}
+
+		if name != "" && !strings.Contains(proc["command"].(string), name) {
+			continue
+		}
+		processes = append(processes, proc)
 	}
 
 	return map[string]interface{}{
+		"total":     len(processes),
 		"processes": processes,
-		"count":     len(processes),
+		"filter":    name,
 	}, nil
 }
 
 func executeProcessKill(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
-	pidRaw, ok := params["pid"]
-	if !ok {
-		return nil, executor.NewErr("INVALID_PARAMS", "pid is required")
-	}
-
+	pidRaw := params["pid"]
 	var pid int
 	switch v := pidRaw.(type) {
-	case float64:
-		pid = int(v)
 	case int:
 		pid = v
-	case string:
-		p, err := strconv.Atoi(v)
-		if err != nil {
-			return nil, executor.NewErr("INVALID_PARAMS", fmt.Sprintf("invalid pid: %s", v))
-		}
-		pid = p
+	case float64:
+		pid = int(v)
 	default:
-		return nil, executor.NewErr("INVALID_PARAMS", "pid must be a number")
+		return nil, executor.NewErr("INVALID_PARAMS", "pid is required (integer)")
 	}
 
-	signal := "TERM"
-	if s, ok := params["signal"].(string); ok {
+	if pid <= 0 {
+		return nil, executor.NewErr("INVALID_PARAMS", "pid must be > 0")
+	}
+
+	signal := "SIGTERM"
+	if s, ok := params["signal"].(string); ok && s != "" {
 		signal = s
 	}
 
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		flag := "/T" // kill process tree
-		if signal == "KILL" || signal == "9" {
-			flag = "/F /T"
-		}
-		cmd = exec.CommandContext(ctx, "taskkill", "/PID", fmt.Sprintf("%d", pid), flag)
-	} else {
-		sigFlag := fmt.Sprintf("-%s", signal)
-		cmd = exec.CommandContext(ctx, "kill", sigFlag, fmt.Sprintf("%d", pid))
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return nil, executor.NewErr("PROCESS_NOT_FOUND",
+			fmt.Sprintf("process %d not found: %v", pid, err))
 	}
 
-	if err := cmd.Run(); err != nil {
-		return nil, executor.NewErr("KILL_FAILED", fmt.Sprintf("failed to kill pid %d: %v", pid, err))
+	sig := parseSignal(signal)
+	if sig != nil {
+		if err := proc.Signal(sig); err != nil {
+			return nil, executor.NewErr("KILL_FAILED",
+				fmt.Sprintf("failed to signal process %d: %v", pid, err))
+		}
 	}
 
 	return map[string]interface{}{
 		"pid":    pid,
 		"signal": signal,
-		"killed": true,
+		"status": "signaled",
 	}, nil
 }
+
+func safeAtoi(s string) int {
+	v, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
+func parseSignal(s string) os.Signal {
+	switch strings.ToUpper(s) {
+	case "SIGTERM", "TERM", "15":
+		return os.Interrupt
+	case "SIGKILL", "KILL", "9":
+		return os.Kill
+	case "SIGHUP", "HUP", "1":
+		return os.Interrupt
+	default:
+		return os.Interrupt
+	}
+}
+

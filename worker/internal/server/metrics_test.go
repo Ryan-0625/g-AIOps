@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/gaiops/worker/internal/reporter"
-	""
 )
 
 func TestMetricsHandlerNoReporter(t *testing.T) {

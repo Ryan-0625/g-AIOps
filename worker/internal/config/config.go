@@ -137,7 +137,7 @@ func validate(cfg *Config) []error {
 		add("worker_id is required")
 	}
 	if cfg.MasterURL == "" {
-		add("master_url is required (e.g. ws://localhost:8080/ws)")
+		add("master_url is required (e.g. ws://localhost:32080/ws)")
 	}
 	if cfg.ClusterToken == "" {
 		add("cluster_token is required")

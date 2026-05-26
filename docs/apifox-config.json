@@ -1,0 +1,47 @@
+{
+  "name": "gAIOps 本地开发环境",
+  "baseUrl": "http://localhost:32080",
+  "parameters": [
+    {
+      "name": "Authorization",
+      "value": "Bearer dev-token-change",
+      "type": "header",
+      "description": "集群认证令牌"
+    },
+    {
+      "name": "Content-Type",
+      "value": "application/json",
+      "type": "header",
+      "description": "请求内容类型"
+    }
+  ],
+  "servers": [
+    {
+      "name": "Master",
+      "url": "http://localhost:32080",
+      "description": "Master API + WebSocket"
+    },
+    {
+      "name": "Brain",
+      "url": "http://localhost:32091",
+      "description": "Brain AI 引擎"
+    }
+  ],
+  "variables": [
+    {
+      "name": "cluster_token",
+      "value": "dev-token-change",
+      "type": "string"
+    },
+    {
+      "name": "worker_id",
+      "value": "local-worker-1",
+      "type": "string"
+    },
+    {
+      "name": "openai_api_key",
+      "value": "sk-4c628691358143999225fb81e0aaec3d",
+      "type": "string"
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-import { ToolRegistry, DynamicToolEntry } from "./tool-registry";
+﻿import { ToolRegistry, DynamicToolEntry } from "../tool-registry";
 
 describe("ToolRegistry", () => {
   let registry: ToolRegistry;
@@ -125,6 +125,8 @@ describe("ToolRegistry", () => {
 
     const entry = registry.findWorkersForAction("custom.test")[0];
     expect(entry.executeCount).toBe(3);
-    expect(entry.state).toBe("running");
+    expect(entry.state).toBe("deployed");
   });
 });
+
+

@@ -1,4 +1,4 @@
-# OS
+﻿# OS
 .DS_Store
 Thumbs.db
 
@@ -22,27 +22,20 @@ node_modules/
 dist/
 *.pyc
 __pycache__/
+.pytest_cache/
 .venv/
 *.egg-info/
 vendor/
 
 # Worker
 worker/worker
-worker/worker.exe
+*.exe
 
-# Master
-master/node_modules/
-master/dist/
-master/coverage/
-
-# Logs
+# Runtime artifacts
+*.err
 *.log
-/tmp/gaiops/
+*.bundle
+logs/
 
-# Test artifacts
-.cache/
-profile.cov
-
-# Generated dev certificates (run scripts/gen-certs.sh to create)
-certs/
-!certs/.gitkeep
+# Docs generated
+docs/server_port.txt

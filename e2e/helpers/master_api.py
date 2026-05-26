@@ -123,7 +123,7 @@ class MasterAPI:
 
     # ── Worker Health (Docker mode only) ───────────────────────────────────
 
-    async def worker_health(self, worker_base_url: str = "http://worker:9090") -> dict:
+    async def worker_health(self, worker_base_url: str = "http://worker:32090") -> dict:
         """GET /health on the Worker's HTTP health endpoint."""
         async with self._session.get(
             f"{worker_base_url}/health"

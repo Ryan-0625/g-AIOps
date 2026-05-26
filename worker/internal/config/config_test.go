@@ -21,7 +21,7 @@ func writeConfig(t *testing.T, content string) string {
 func TestLoadValidConfig(t *testing.T) {
 	yaml := `
 worker_id: "test-worker"
-master_url: "ws://localhost:8080/ws"
+master_url: "ws://localhost:32080/ws"
 cluster_token: "test-token"
 heartbeat_interval: 15
 reconnect:

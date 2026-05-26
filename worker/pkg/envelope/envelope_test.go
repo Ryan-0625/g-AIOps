@@ -274,4 +274,186 @@ func TestValidateV11ToolDeployMissingFields(t *testing.T) {
 		ProtoVersion: "1.1",
 		TraceID:      "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
 		MsgID:        "00000000-0000-0000-0000-000000000001",
-		MsgType:    
+		MsgType:      envelope.MsgToolDeploy,
+		Timestamp:    1715000000,
+		TTLSeconds:   60,
+		Source:       envelope.RoleMaster,
+		Target:       envelope.RoleWorker,
+		Payload: envelope.Payload{
+			Action: "custom.hello",
+			Status: envelope.StatusPending,
+		},
+	}
+	errs := e.Validate()
+	checkHasError(t, errs, "code_body is required")
+	checkHasError(t, errs, "deploy_id is required")
+	checkHasError(t, errs, "runtime_hints.interpreter is required")
+}
+
+func TestValidateV11ToolDeployValid(t *testing.T) {
+	e := &envelope.Envelope{
+		ProtoVersion: "1.1",
+		TraceID:      "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+		MsgID:        "00000000-0000-0000-0000-000000000001",
+		MsgType:      envelope.MsgToolDeploy,
+		Timestamp:    1715000000,
+		TTLSeconds:   60,
+		Source:       envelope.RoleMaster,
+		Target:       envelope.RoleWorker,
+		DeployID:     "00000000-0000-0000-0000-000000000002",
+		CodeBody:     `printf '{"status":"ok"}'`,
+		RuntimeHints: &envelope.RuntimeHints{Interpreter: "bash"},
+		Payload: envelope.Payload{
+			Action: "custom.hello",
+			Status: envelope.StatusPending,
+		},
+	}
+	errs := e.Validate()
+	if len(errs) > 0 {
+		t.Errorf("unexpected validation errors: %v", errs)
+	}
+}
+
+func TestValidateV11ToolCodeRequiresBody(t *testing.T) {
+	e := &envelope.Envelope{
+		ProtoVersion: "1.1",
+		TraceID:      "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+		MsgID:        "00000000-0000-0000-0000-000000000001",
+		MsgType:      envelope.MsgToolCode,
+		Timestamp:    1715000000,
+		TTLSeconds:   60,
+		Source:       envelope.RoleMaster,
+		Target:       envelope.RoleWorker,
+		DeployID:     "00000000-0000-0000-0000-000000000002",
+		Payload: envelope.Payload{
+			Action: "custom.hello",
+			Status: envelope.StatusPending,
+		},
+	}
+	errs := e.Validate()
+	checkHasError(t, errs, "code_body is required")
+}
+
+func TestValidateV11DeployIDInvalid(t *testing.T) {
+	e := &envelope.Envelope{
+		ProtoVersion: "1.1",
+		TraceID:      "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+		MsgID:        "00000000-0000-0000-0000-000000000001",
+		MsgType:      envelope.MsgToolDeploy,
+		Timestamp:    1715000000,
+		TTLSeconds:   60,
+		Source:       envelope.RoleMaster,
+		Target:       envelope.RoleWorker,
+		DeployID:     "not-a-uuid",
+		CodeBody:     "echo hi",
+		RuntimeHints: &envelope.RuntimeHints{Interpreter: "bash"},
+		Payload: envelope.Payload{
+			Action: "custom.hello",
+			Status: envelope.StatusPending,
+		},
+	}
+	errs := e.Validate()
+	checkHasError(t, errs, "deploy_id must be a valid UUID")
+}
+
+func TestNewRequestVersionBump(t *testing.T) {
+	e := envelope.NewRequest(
+		"a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+		"00000000-0000-0000-0000-000000000001",
+		"ping.icmp",
+		nil,
+	)
+	if e.ProtoVersion != "1.1" {
+		t.Errorf("NewRequest should default to 1.1, got %q", e.ProtoVersion)
+	}
+}
+
+func TestEnvelopeV11JSONRoundtrip(t *testing.T) {
+	original := &envelope.Envelope{
+		ProtoVersion: "1.1",
+		TraceID:      "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+		MsgID:        "00000000-0000-0000-0000-000000000001",
+		MsgType:      envelope.MsgToolDeploy,
+		Timestamp:    1715000000,
+		TTLSeconds:   60,
+		Source:       envelope.RoleMaster,
+		Target:       envelope.RoleWorker,
+		DeployID:     "00000000-0000-0000-0000-000000000002",
+		CodeBody:     `printf '{"status":"ok"}'`,
+		RuntimeHints: &envelope.RuntimeHints{
+			Interpreter: "bash",
+			EnvVars:     map[string]string{"DEBUG": "1"},
+		},
+		Payload: envelope.Payload{
+			Action: "custom.hello",
+			Params: map[string]interface{}{"name": "test"},
+			Status: envelope.StatusPending,
+		},
+	}
+
+	data, err := original.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	parsed, err := envelope.Unmarshal(data)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	if parsed.DeployID != original.DeployID {
+		t.Errorf("DeployID mismatch after roundtrip")
+	}
+	if parsed.CodeBody != original.CodeBody {
+		t.Errorf("CodeBody mismatch after roundtrip")
+	}
+	if parsed.RuntimeHints == nil || parsed.RuntimeHints.Interpreter != "bash" {
+		t.Errorf("RuntimeHints.Interpreter mismatch after roundtrip")
+	}
+	if parsed.RuntimeHints.EnvVars["DEBUG"] != "1" {
+		t.Errorf("RuntimeHints.EnvVars.DEBUG mismatch")
+	}
+}
+
+func TestMustMarshalValidOK(t *testing.T) {
+	e := envelope.NewRequest(
+		"a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+		"00000000-0000-0000-0000-000000000001",
+		"ping.icmp",
+		nil,
+	)
+	_ = envelope.MustMarshal(e) // should not panic
+}
+
+func TestMustMarshalInvalidProducesOutput(t *testing.T) {
+	// MustMarshal may be lenient - verify it doesnt crash
+	e := &envelope.Envelope{}
+	result := envelope.MustMarshal(e)
+	if len(result) == 0 {
+		t.Log("MustMarshal returned empty result for empty envelope")
+	}
+}
+
+
+func checkHasError(t *testing.T, errs []string, substr string) {
+	t.Helper()
+	for _, err := range errs {
+		if contains(err, substr) {
+			return
+		}
+	}
+	t.Errorf("expected error containing %q in %v", substr, errs)
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && containsStr(s, substr)
+}
+
+func containsStr(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

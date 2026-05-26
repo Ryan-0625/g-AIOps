@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -335,7 +336,7 @@ func (lm *LifecycleManager) cleanupStale() int {
 	defer lm.mu.Unlock()
 
 	now := time.Now().Unix()
-	staleThreshold := int64(24 * time.Hour.Second()) // 24 hours
+	staleThreshold := int64(24 * time.Hour.Seconds()) // 24 hours
 	var toRemove []string
 
 	for action, t := range lm.tools {
