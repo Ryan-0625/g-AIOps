@@ -39,3 +39,17 @@ logs/
 
 # Docs generated
 docs/server_port.txt
+
+# Test coverage
+master/coverage/
+
+# Generated certs (dev only)
+certs/
+
+# Temp / scratch
+/demo.py
+*.err
+*.bundle
+
+# IDE cache
+.pytest_cache/
